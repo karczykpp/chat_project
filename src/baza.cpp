@@ -6,10 +6,14 @@ using namespace std;
 
 int main()
 {
+    if (remove("chat_database.db") != 0) {
+        cout << "Nie usunieto pliku (moze nie istnial), tworze nowy..." << endl;
+    } else {
+        cout << "Poprzednia baza usunieta pomyslnie." << endl;
+    }
     sqlite3* DB;
     string sqlUser = "CREATE TABLE IF NOT EXISTS USERS("
-                     "ID INTEGER PRIMARY KEY AUTOINCREMENT, "
-                     "USERNAME TEXT NOT NULL UNIQUE, "
+                     "USERNAME TEXT PRIMARY KEY, "
                      "PASSWORD TEXT NOT NULL);";
     int exit = 0;
     exit = sqlite3_open("chat_database.db", &DB);

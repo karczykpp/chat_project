@@ -11,9 +11,12 @@
 using namespace std;
 using json = nlohmann::json;
 
-
 int main(int argc, char *argv[])
 {
+  json request;
+  string user, password;
+  int wybor;
+
   int sock = socket(AF_INET, SOCK_STREAM, 0);
   if (sock == -1)
   {
@@ -22,7 +25,7 @@ int main(int argc, char *argv[])
   }
   struct sockaddr_in serverAddr;
   serverAddr.sin_family = AF_INET;
-  serverAddr.sin_port = htons(1100);
+  serverAddr.sin_port = htons(1104);
   serverAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
 
   if (connect(sock, (struct sockaddr *)&serverAddr, sizeof(serverAddr)) == -1)
@@ -31,16 +34,36 @@ int main(int argc, char *argv[])
     close(sock);
     return 1;
   }
+  cout << "Wybierz opcję:\n 1. Rejestracja\n 2. Logowanie\n"
+       << std::endl;
+  cin >> wybor;
+  cin.ignore();
+  switch (wybor)
+  {
+  case 1:
+    cout << "Wybrano rejestrację."<<endl;
+    cout << "Podaj dane do rejestracji.\n Podaj użytkownika: " <<endl;
+    getline(cin, user);
+    cout << "Podaj hasło: " <<endl;
+    getline(cin, password);
+    request["command"] = "REGISTER";
+    request["username"] = user;
+    request["password"] = password;
+    break;
+  case 2:
+    cout << "Wybrano logowanie."<<endl;
+    cout << "Podaj dane do logowania. \nPodaj użytkownika: " <<endl;
+    getline(cin, user);
+    cout << "Podaj hasło: " <<endl;
+    getline(cin, password);
+    request["command"] = "LOGIN";
+    request["username"] = user;
+    request["password"] = password;
+    break;
 
-  string user, password;
-  cout << "Enter username: ";
-  getline(cin, user);
-  cout << "Enter password: ";
-  getline(cin, password);
-  json request;
-  request["command"] = "REGISTER";
-  request["username"] = user;
-  request["password"] = password;
+  default:
+    break;
+  }
 
   string message = request.dump();
   send(sock, message.c_str(), message.size(), 0);
@@ -51,8 +74,33 @@ int main(int argc, char *argv[])
   if (n > 0)
   {
     json response = json::parse(buffer);
-    cout << "Wynik z serwera: " << response["status"] << std::endl;
-    cout << "Message from server: " << response["message"] << std::endl;
+    cout << "Wynik z serwera: " << response["status"] << endl;
+    cout << "Message from server: " << response["message"] << endl;
+    if (response["status"] == "USER_NOT_FOUND")
+    {
+      cout << "Nie znaleziono użytkownika. Proszę się zarejestrować." <<endl;
+      cout << "Podaj dane do rejestracji.\n Podaj użytkownika: " <<endl;
+      getline(cin, user);
+      cout << "Podaj hasło: " <<endl;
+      getline(cin, password);
+      request["command"] = "REGISTER";
+      request["username"] = user;
+      request["password"] = password;
+      message = request.dump();
+      send(sock, message.c_str(), message.size(), 0);
+      memset(buffer, 0, sizeof(buffer));
+      n = recv(sock, buffer, sizeof(buffer) - 1, 0);
+      if (n > 0)
+      {
+        json reg_response = json::parse(buffer);
+        cout << "Wynik z serwera: " << reg_response["status"] << endl;
+        cout << "Message from server: " << reg_response["message"] << endl; 
+      }
+    }
+    if (response["status"] == "SUCCESS")
+    {
+      cout << "Zalogowano pomyślnie!" << endl;
+    }
   }
   close(sock);
   return 0;

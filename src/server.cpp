@@ -12,6 +12,77 @@
 using json = nlohmann::json;
 using namespace std;
 
+json registerStage(json received_json)
+{
+  json response;
+  string user = received_json.value("username", "");
+  string password = received_json.value("password", "");
+
+  sqlite3 *DB;
+  char *messaggeError;
+  int exit = sqlite3_open("chat_database.db", &DB);
+  string sqlInsert = "INSERT INTO USERS (USERNAME, PASSWORD) VALUES ('" + user + "', '" + password + "');";
+  exit = sqlite3_exec(DB, sqlInsert.c_str(), NULL, 0, &messaggeError);
+  cout << exit << endl;
+  if (exit != SQLITE_OK)
+  {
+    response["status"] = "ERROR";
+    response["message"] = "Error registering user: " + string(messaggeError);
+    sqlite3_free(messaggeError);
+  }
+  else
+  {
+    response["status"] = "SUCCESS";
+    response["message"] = "User registered successfully.";
+  }
+  sqlite3_close(DB);
+  return response;
+}
+
+json loginStage(json received_json)
+{
+  json response;
+  string user = received_json.value("username", "");
+  string password = received_json.value("password", "");
+
+  sqlite3 *DB;
+  char *messaggeError;
+  int exit = sqlite3_open("chat_database.db", &DB);
+  string query = "SELECT USERNAME, PASSWORD FROM USERS WHERE USERNAME='" + user + "';";
+  sqlite3_stmt *stmt;
+  if (sqlite3_prepare_v2(DB, query.c_str(), -1, &stmt, NULL) == SQLITE_OK)
+  {
+    if (sqlite3_step(stmt) == SQLITE_ROW)
+    {
+      const unsigned char *usernameVal = sqlite3_column_text(stmt, 0);
+      const unsigned char *passwordVal = sqlite3_column_text(stmt, 1);
+      string userDB = string(reinterpret_cast<const char *>(usernameVal));
+      string passDB = string(reinterpret_cast<const char *>(passwordVal));
+      if (passDB == password)
+      {
+        response["status"] = "SUCCESS";
+        response["message"] = "Login successful.";
+      }
+      else
+      {
+        response["status"] = "ERROR";
+        response["message"] = "Incorrect password.";
+      }
+    }
+    else
+    {
+      response["status"] = "USER_NOT_FOUND";
+      response["message"] = "User not found.";
+    }
+  }
+  else
+  {
+    cerr << "Błąd w zapytaniu SQL" << endl;
+  }
+  sqlite3_finalize(stmt);
+  return response;
+}
+
 int main(void)
 {
   int serverSocket, clientSocket;
@@ -19,17 +90,18 @@ int main(void)
   socklen_t addr_size;
 
   serverSocket = socket(PF_INET, SOCK_STREAM, 0);
-  if (serverSocket == 1)
+  if (serverSocket == -1)
   {
     perror("Socket creation failed");
     return 1;
   }
 
   serverAddr.sin_family = AF_INET;
-  serverAddr.sin_port = htons(1100);
+  serverAddr.sin_port = htons(1104);
   serverAddr.sin_addr.s_addr = htonl(INADDR_ANY);
   memset(serverAddr.sin_zero, '\0', sizeof serverAddr.sin_zero);
-
+  int opt = 1;
+  setsockopt(serverSocket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
   if (bind(serverSocket, (struct sockaddr *)&serverAddr, sizeof(serverAddr)) == -1)
   {
     perror("Bind failed");
@@ -54,58 +126,49 @@ int main(void)
       perror("Accept failed");
       continue;
     }
-    char buffer[2048];
-    memset(buffer, 0, sizeof(buffer));
-    int n = recv(clientSocket, buffer, sizeof(buffer) - 1, 0);
-    if (n > 0)
+    while (true)
     {
-      cout << "Received data: " << buffer << std::endl;
-      try
+      char buffer[2048];
+      memset(buffer, 0, sizeof(buffer));
+      int n = recv(clientSocket, buffer, sizeof(buffer) - 1, 0);
+      if (n > 0)
       {
-        json received_json = json::parse(buffer);
-        string command = received_json.value("command", "UNKNOWN");
-        json response;
-
-        if (command == "REGISTER")
+        cout << "Received data: " << buffer << std::endl;
+        try
         {
-          string user = received_json.value("username", "");
-          string password = received_json.value("password", "");
+          json received_json = json::parse(buffer);
+          string command = received_json["command"];
+          json response;
 
-          sqlite3* DB;
-          char *messaggeError;
-          int exit = sqlite3_open("chat_database.db", &DB);
-          string sqlInsert = "INSERT INTO USERS (USERNAME, PASSWORD) VALUES ('" + user + "', '" + password + "');";
-          exit = sqlite3_exec(DB, sqlInsert.c_str(), NULL, 0, &messaggeError);
-          if (exit != SQLITE_OK) 
+          if (command == "REGISTER")
           {
-              response["status"] = "ERROR";
-              response["message"] = "Error registering user: " + string(messaggeError);
-              sqlite3_free(messaggeError);
+            response = registerStage(received_json);
+          }
+          else if (command == "LOGIN")
+          {
+            response = loginStage(received_json);
           }
           else
           {
-              response["status"] = "SUCCESS";
-              response["message"] = "User registered successfully.";
+            response["status"] = "ERROR";
+            response["message"] = "Unknown command.";
           }
-          sqlite3_close(DB);
-        }
-        else
-        {
-          response["status"] = "ERROR";
-          response["message"] = "Unknown command.";
-        }
 
-        string response_str = response.dump();
-        send(clientSocket, response_str.c_str(), response_str.size(), 0);
+          string response_str = response.dump();
+          send(clientSocket, response_str.c_str(), response_str.size(), 0);
+        }
+        catch (json::parse_error &e)
+        {
+          cerr << "JSON parse error: " << e.what() << std::endl;
+        }
       }
-      catch (json::parse_error &e)
+      else
       {
-        cerr << "JSON parse error: " << e.what() << std::endl;
+        close(clientSocket);
+        cout << "Connection closed." << std::endl;
+        break;
       }
     }
-
-    close(clientSocket);
-    cout << "Connection closed." << std::endl;
   }
   close(serverSocket);
   return 0;
