@@ -22,7 +22,7 @@ int main(int argc, char *argv[])
   }
   struct sockaddr_in serverAddr;
   serverAddr.sin_family = AF_INET;
-  serverAddr.sin_port = htons(1101);
+  serverAddr.sin_port = htons(1100);
   serverAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
 
   if (connect(sock, (struct sockaddr *)&serverAddr, sizeof(serverAddr)) == -1)

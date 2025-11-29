@@ -8,6 +8,7 @@
 #include <unistd.h>
 #include "../json.hpp"
 #include <iostream>
+#include <sqlite3.h>
 using json = nlohmann::json;
 using namespace std;
 
@@ -25,7 +26,7 @@ int main(void)
   }
 
   serverAddr.sin_family = AF_INET;
-  serverAddr.sin_port = htons(1101);
+  serverAddr.sin_port = htons(1100);
   serverAddr.sin_addr.s_addr = htonl(INADDR_ANY);
   memset(serverAddr.sin_zero, '\0', sizeof serverAddr.sin_zero);
 
@@ -70,9 +71,23 @@ int main(void)
           string user = received_json.value("username", "");
           string password = received_json.value("password", "");
 
-          cout << "Registering user: " << user << " with password: " << password << std::endl;
-          response["status"] = "SUCCESS";
-          response["message"] = "User registered successfully.";
+          sqlite3* DB;
+          char *messaggeError;
+          int exit = sqlite3_open("chat_database.db", &DB);
+          string sqlInsert = "INSERT INTO USERS (USERNAME, PASSWORD) VALUES ('" + user + "', '" + password + "');";
+          exit = sqlite3_exec(DB, sqlInsert.c_str(), NULL, 0, &messaggeError);
+          if (exit != SQLITE_OK) 
+          {
+              response["status"] = "ERROR";
+              response["message"] = "Error registering user: " + string(messaggeError);
+              sqlite3_free(messaggeError);
+          }
+          else
+          {
+              response["status"] = "SUCCESS";
+              response["message"] = "User registered successfully.";
+          }
+          sqlite3_close(DB);
         }
         else
         {
