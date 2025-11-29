@@ -1,0 +1,47 @@
+src/baza
+client
+server
+test
+
+# C/C++ build artefacts
+*.o
+*.obj
+*.so
+*.a
+*.dylib
+*.dll
+*.exe
+*.out
+*.app
+
+# Linker / debug
+*.ilk
+*.pdb
+*.dSYM/
+
+# Coverage
+*.gcda
+*.gcno
+*.gcov
+
+# CMake
+build/
+cmake-build*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+install_manifest.txt
+
+# Common build dirs
+bin/
+out/
+Debug/
+Release/
+
+# IDE/editor
+.vscode/
+.idea/
+
+# Temporary
+*.log
+*.tmp
