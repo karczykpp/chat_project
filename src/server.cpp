@@ -102,7 +102,7 @@ int main(void)
   memset(serverAddr.sin_zero, '\0', sizeof serverAddr.sin_zero);
   int opt = 1;
   setsockopt(serverSocket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-  if (bind(serverSocket, (struct sockaddr *)&serverAddr, sizeof(serverAddr)) == -1)
+  if (::bind(serverSocket, (struct sockaddr *)&serverAddr, sizeof(serverAddr)) == -1)
   {
     perror("Bind failed");
     return 1;
