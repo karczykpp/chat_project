@@ -6,65 +6,92 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include "json.hpp"
+#include "../json.hpp"
+#include <iostream>
 using json = nlohmann::json;
-  
-  int main(void)
+using namespace std;
+
+int main(void)
+{
+  int serverSocket, clientSocket;
+  struct sockaddr_in serverAddr, clientAddr;
+  socklen_t addr_size;
+
+  serverSocket = socket(PF_INET, SOCK_STREAM, 0);
+  if (serverSocket == 1)
   {
-    struct sockaddr_in sa;
-    int SocketFD = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (SocketFD == -1) {
-      perror("cannot create socket");
-      exit(EXIT_FAILURE);
+    perror("Socket creation failed");
+    return 1;
+  }
+
+  serverAddr.sin_family = AF_INET;
+  serverAddr.sin_port = htons(1101);
+  serverAddr.sin_addr.s_addr = htonl(INADDR_ANY);
+  memset(serverAddr.sin_zero, '\0', sizeof serverAddr.sin_zero);
+
+  if (bind(serverSocket, (struct sockaddr *)&serverAddr, sizeof(serverAddr)) == -1)
+  {
+    perror("Bind failed");
+    return 1;
+  }
+
+  if (listen(serverSocket, 10) == 0)
+  {
+    cout << "Listening on port 1100..." << std::endl;
+  }
+  else
+  {
+    cout << "Listen failed!" << std::endl;
+  }
+
+  while (true)
+  {
+    addr_size = sizeof clientAddr;
+    clientSocket = accept(serverSocket, (struct sockaddr *)&clientAddr, &addr_size);
+    if (clientSocket == -1)
+    {
+      perror("Accept failed");
+      continue;
     }
-  
-    memset(&sa, 0, sizeof sa);
-  
-    sa.sin_family = AF_INET;
-    sa.sin_port = htons(1100);
-    sa.sin_addr.s_addr = htonl(INADDR_ANY);
-  
-    if (bind(SocketFD,(struct sockaddr *)&sa, sizeof sa) == -1) {
-      perror("bind failed");
-      close(SocketFD);
-      exit(EXIT_FAILURE);
-    }
-  
-    if (listen(SocketFD, 10) == -1) {
-      perror("listen failed");
-      close(SocketFD);
-      exit(EXIT_FAILURE);
-    }
-  
-    for (;;) {
-      int ConnectFD = accept(SocketFD, NULL, NULL);
-  
-      if (ConnectFD == -1) {
-        perror("accept failed");
-        close(SocketFD);
-        exit(EXIT_FAILURE);
+    char buffer[2048];
+    memset(buffer, 0, sizeof(buffer));
+    int n = recv(clientSocket, buffer, sizeof(buffer) - 1, 0);
+    if (n > 0)
+    {
+      cout << "Received data: " << buffer << std::endl;
+      try
+      {
+        json received_json = json::parse(buffer);
+        string command = received_json.value("command", "UNKNOWN");
+        json response;
+
+        if (command == "REGISTER")
+        {
+          string user = received_json.value("username", "");
+          string password = received_json.value("password", "");
+
+          cout << "Registering user: " << user << " with password: " << password << std::endl;
+          response["status"] = "SUCCESS";
+          response["message"] = "User registered successfully.";
+        }
+        else
+        {
+          response["status"] = "ERROR";
+          response["message"] = "Unknown command.";
+        }
+
+        string response_str = response.dump();
+        send(clientSocket, response_str.c_str(), response_str.size(), 0);
       }
-
-    char buff[256];
-    int n;
-    bzero(buff,256);
-    n= read(ConnectFD,buff,sizeof(buff));
-
-    printf("message is : %s\n",buff);
-    printf("message was %i\n",n);
-      /* perform read write operations ... 
-      read(ConnectFD, buff, size)
-      */
-  
-      if (shutdown(ConnectFD, SHUT_RDWR) == -1) {
-        perror("shutdown failed");
-        close(ConnectFD);
-        close(SocketFD);
-        exit(EXIT_FAILURE);
+      catch (json::parse_error &e)
+      {
+        cerr << "JSON parse error: " << e.what() << std::endl;
       }
-      close(ConnectFD);
     }
 
-    close(SocketFD);
-    return EXIT_SUCCESS;  
+    close(clientSocket);
+    cout << "Connection closed." << std::endl;
+  }
+  close(serverSocket);
+  return 0;
 }
