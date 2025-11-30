@@ -9,8 +9,16 @@
 #include "../json.hpp"
 #include <iostream>
 #include <sqlite3.h>
+#include <pthread.h>
+
+pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 using json = nlohmann::json;
 using namespace std;
+
+char buffer[2048];
+int serverSocket, clientSocket;
+struct sockaddr_in serverAddr, clientAddr;
+socklen_t addr_size;
 
 json registerStage(json received_json)
 {
@@ -83,12 +91,64 @@ json loginStage(json received_json)
   return response;
 }
 
+void *socketThread(void *arg)
+{
+  addr_size = sizeof clientAddr;
+  clientSocket = accept(serverSocket, (struct sockaddr *)&clientAddr, &addr_size);
+  while (true)
+  {
+    if (clientSocket == -1)
+    {
+      perror("Accept failed");
+      continue;
+    }
+    memset(buffer, 0, sizeof(buffer));
+    int n = recv(clientSocket, buffer, sizeof(buffer) - 1, 0);
+    if (n > 0)
+    {
+      cout << "Received data: " << buffer << std::endl;
+      try
+      {
+        json received_json = json::parse(buffer);
+        string command = received_json["command"];
+        json response;
+
+        if (command == "REGISTER")
+        {
+          response = registerStage(received_json);
+        }
+        else if (command == "LOGIN")
+        {
+          response = loginStage(received_json);
+        }
+        else
+        {
+          response["status"] = "ERROR";
+          response["message"] = "Unknown command.";
+        }
+
+        string response_str = response.dump();
+        send(clientSocket, response_str.c_str(), response_str.size(), 0);
+      }
+      catch (json::parse_error &e)
+      {
+        cerr << "JSON parse error: " << e.what() << std::endl;
+      }
+    }
+    else
+    {
+      close(clientSocket);
+      cout << "Connection closed." << std::endl;
+      break;
+    }
+  }
+  printf("Exit socketThread \n");
+
+  pthread_exit(NULL);
+}
+
 int main(void)
 {
-  int serverSocket, clientSocket;
-  struct sockaddr_in serverAddr, clientAddr;
-  socklen_t addr_size;
-
   serverSocket = socket(PF_INET, SOCK_STREAM, 0);
   if (serverSocket == -1)
   {
@@ -116,59 +176,14 @@ int main(void)
   {
     cout << "Listen failed!" << std::endl;
   }
+  pthread_t thread_id;
 
   while (true)
   {
-    addr_size = sizeof clientAddr;
-    clientSocket = accept(serverSocket, (struct sockaddr *)&clientAddr, &addr_size);
-    if (clientSocket == -1)
-    {
-      perror("Accept failed");
-      continue;
-    }
-    while (true)
-    {
-      char buffer[2048];
-      memset(buffer, 0, sizeof(buffer));
-      int n = recv(clientSocket, buffer, sizeof(buffer) - 1, 0);
-      if (n > 0)
-      {
-        cout << "Received data: " << buffer << std::endl;
-        try
-        {
-          json received_json = json::parse(buffer);
-          string command = received_json["command"];
-          json response;
+    if (pthread_create(&thread_id, NULL, socketThread, &clientSocket) != 0)
+      printf("Failed to create thread\n");
 
-          if (command == "REGISTER")
-          {
-            response = registerStage(received_json);
-          }
-          else if (command == "LOGIN")
-          {
-            response = loginStage(received_json);
-          }
-          else
-          {
-            response["status"] = "ERROR";
-            response["message"] = "Unknown command.";
-          }
-
-          string response_str = response.dump();
-          send(clientSocket, response_str.c_str(), response_str.size(), 0);
-        }
-        catch (json::parse_error &e)
-        {
-          cerr << "JSON parse error: " << e.what() << std::endl;
-        }
-      }
-      else
-      {
-        close(clientSocket);
-        cout << "Connection closed." << std::endl;
-        break;
-      }
-    }
+    pthread_detach(thread_id);
   }
   close(serverSocket);
   return 0;
