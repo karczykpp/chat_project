@@ -19,6 +19,100 @@ int serverSocket;
 struct sockaddr_in serverAddr, clientAddr;
 socklen_t addr_size;
 
+UserManager userManager;
+
+class UserManager
+{
+  public vector<string, int> loggedInUsers;
+  mutex lock;
+
+  public void addUser(int socketfd, string username)
+  {
+    pthread_mutex_lock(&lock);
+    loggedInUsers.push_back(make_pair(username, socketfd));
+    cout << "[UserManager] Dodano: " << username << " z socketfd: " << socketfd << endl;
+    pthread_mutex_unlock(&lock);
+  }
+
+  public void removeUser(int socketfd)
+  {
+    pthread_mutex_lock(&lock);
+    for (auto it = loggedInUsers.begin(); it != loggedInUsers.end(); ++it)
+    {
+      if (it->second == socketfd)
+      {
+        cout << "[UserManager] Usunięto: " << it->first << " z socketfd: " << socketfd << endl;
+        loggedInUsers.erase(it);
+        break;
+      }
+    }
+    pthread_mutex_unlock(&lock);
+  }
+
+  int getSocket(string username)
+  {
+    pthread_mutex_lock(&lock);
+    int foundSocket = -1;
+
+    for (const auto &user : loggedInUsers)
+    {
+      if (user.first == username)
+      {
+        foundSocket = user.second;
+        break;
+      }
+    }
+    pthread_mutex_unlock(&lock);
+    return foundSocket;
+  }
+
+  string getUsername(int socketfd)
+  {
+    pthread_mutex_lock(&lock);
+    string foundName = "";
+
+    for (const auto &user : loggedInUsers)
+    {
+      if (user.second == socketfd)
+      {
+        foundName = user.first;
+        break;
+      }
+    }
+    pthread_mutex_unlock(&lock);
+    return foundName;
+  }
+
+  string getOnlineList()
+  {
+    pthread_mutex_lock(&lock);
+    string list = "";
+    for (const auto &user : loggedInUsers)
+    {
+      list += user.first + ",";
+    }
+    if (!list.empty())
+    {
+      list.pop_back();
+    }
+    pthread_mutex_unlock(&lock);
+    return list;
+  }
+
+  void broadcast(string message, int senderSocket)
+  {
+    pthread_mutex_lock(&lock);
+    for (const auto &user : loggedInUsers)
+    {
+      if (user.second != senderSocket)
+      {
+        send(user.second, message.c_str(), message.length(), 0);
+      }
+    }
+    pthread_mutex_unlock(&lock);
+  }
+};
+
 json registerStage(json received_json)
 {
   json response;
@@ -46,7 +140,7 @@ json registerStage(json received_json)
   return response;
 }
 
-json loginStage(json received_json)
+json loginStage(json received_json, int socketfd)
 {
   json response;
   string user = received_json.value("username", "");
@@ -67,8 +161,28 @@ json loginStage(json received_json)
       string passDB = string(reinterpret_cast<const char *>(passwordVal));
       if (passDB == password)
       {
+        string queryUsers = "SELECT USERNAME FROM USERS;";
+        sqlite3_stmt *stmtUsers;
+        if (sqlite3_prepare_v2(DB, queryUsers.c_str(), -1, &stmtUsers, NULL) == SQLITE_OK)
+        {
+          string usersList = "";
+          while (sqlite3_step(stmtUsers) == SQLITE_ROW)
+          {
+            const unsigned char *usernameVal = sqlite3_column_text(stmtUsers, 0);
+            string userIter = string(reinterpret_cast<const char *>(usernameVal));
+            usersList += userIter + ",";
+          }
+          if (!usersList.empty())
+          {
+            usersList.pop_back();
+          }
+          response["all_users"] = usersList;
+        }
+        sqlite3_finalize(stmtUsers);
+        userManager.addUser(socketfd, user);
         response["status"] = "SUCCESS";
         response["message"] = "Login successful.";
+        response["online_users"] = userManager.getOnlineList();
       }
       else
       {
@@ -94,6 +208,7 @@ void *socketThread(void *arg)
 {
   char buffer[2048];
   int newSocket = *((int *)arg);
+  cout << "New connection accepted, socket fd: " << newSocket << std::endl;
   while (true)
   {
     if (newSocket == -1)
@@ -118,7 +233,7 @@ void *socketThread(void *arg)
         }
         else if (command == "LOGIN")
         {
-          response = loginStage(received_json);
+          response = loginStage(received_json, newSocket);
         }
         else
         {
@@ -181,6 +296,7 @@ int main(void)
   {
     addr_size = sizeof clientAddr;
     int clientSocket = accept(serverSocket, (struct sockaddr *)&clientAddr, &addr_size);
+    cout << clientSocket << endl;
     if (pthread_create(&thread_id, NULL, socketThread, &clientSocket) != 0)
       printf("Failed to create thread\n");
 

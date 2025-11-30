@@ -12,6 +12,7 @@ ctk.set_default_color_theme("blue")
 class ModernChatClient(ctk.CTk):
     def __init__(self):
         super().__init__()
+        self.current_user = ""
 
         self.title("Komunikator - Klient")
         self.geometry("900x500")
@@ -49,6 +50,77 @@ class ModernChatClient(ctk.CTk):
 
         self.label_status = ctk.CTkLabel(self.frame, text="Połączono z serwerem 127.0.0.1", text_color="gray")
         self.label_status.pack(side="bottom", pady=10)
+
+    def main_chat_window(self):
+        self.grid_columnconfigure(0, weight=0)
+        self.grid_columnconfigure(1, weight=1)
+        self.grid_rowconfigure(0, weight=1)
+
+        self.sidebar_frame = ctk.CTkFrame(self, width=200, corner_radius=0)
+        self.sidebar_frame.grid(row=0, column=0, sticky="nsew")
+        
+        self.logo_label = ctk.CTkLabel(self.sidebar_frame, text="CzatApp \nKontakty", font=ctk.CTkFont(size=20, weight="bold"))
+        self.logo_label.grid(row=0, column=0, padx=20, pady=(20, 10))
+
+        self.friends_list = ctk.CTkScrollableFrame(self.sidebar_frame, label_text="Dostępni")
+        self.friends_list.grid(row=1, column=0, padx=20, pady=10, sticky="nsew")
+        
+        self.sidebar_frame.grid_rowconfigure(1, weight=1)
+
+        dummy_friends = ["Janek", "Ania", "Marek_Dev", "Grupa IT"]
+        for friend in dummy_friends:
+            btn = ctk.CTkButton(self.friends_list, text=friend, fg_color="transparent", border_width=1, text_color=("gray10", "#DCE4EE"))
+            btn.pack(pady=5, padx=5, fill="x")
+
+        self.user_info_label = ctk.CTkLabel(self.sidebar_frame, text=f"{self.current_user}", anchor="w")
+        self.user_info_label.grid(row=2, column=0, padx=20, pady=(10, 0), sticky="ew")
+
+        self.btn_logout = ctk.CTkButton(self.sidebar_frame, text="Wyloguj", command=self.action_logout, fg_color="#d63031", hover_color="#ff7675")
+        self.btn_logout.grid(row=3, column=0, padx=20, pady=20)
+
+
+        self.main_area = ctk.CTkFrame(self, corner_radius=0, fg_color="transparent")
+        self.main_area.grid(row=0, column=1, sticky="nsew")
+        
+        self.main_area.grid_rowconfigure(0, weight=1)
+        self.main_area.grid_rowconfigure(1, weight=0) 
+        self.main_area.grid_columnconfigure(0, weight=1)
+
+        self.chat_history = ctk.CTkTextbox(self.main_area, width=250)
+        self.chat_history.grid(row=0, column=0, padx=20, pady=(20, 10), sticky="nsew")
+        self.chat_history.insert("0.0", "Witaj na czacie!\nTutaj pojawią się wiadomości.\n\n")
+        self.chat_history.configure(state="disabled") 
+
+        self.entry_frame = ctk.CTkFrame(self.main_area, fg_color="transparent")
+        self.entry_frame.grid(row=1, column=0, padx=20, pady=20, sticky="ew")
+
+        self.entry_msg = ctk.CTkEntry(self.entry_frame, placeholder_text="Napisz wiadomość...")
+        self.entry_msg.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        
+        self.entry_msg.bind("<Return>", lambda event: self.send_message_gui())
+
+        self.btn_send = ctk.CTkButton(self.entry_frame, text="Wyślij ➤", width=80, command=self.send_message_gui)
+        self.btn_send.pack(side="right")
+    
+    def action_logout(self):
+        self.sidebar_frame.destroy()
+        self.main_area.destroy()
+ 
+        self.grid_columnconfigure(0, weight=0)
+        self.grid_columnconfigure(1, weight=0)
+        self.grid_rowconfigure(0, weight=0)
+        
+        self.create_widgets()
+    
+    def send_message_gui(self):
+        msg = self.entry_msg.get()
+        if msg:
+            self.chat_history.configure(state="normal")
+            self.chat_history.insert("end", f"Ja: {msg}\n")
+            self.chat_history.configure(state="disabled")
+            self.chat_history.see("end")
+            self.entry_msg.delete(0, "end")
+            # TUTAJ W PRZYSZŁOŚCI WYŚLESZ JSON DO SERWERA C++
 
     def send_request(self, command):
         username = self.entry_user.get()
@@ -98,8 +170,13 @@ class ModernChatClient(ctk.CTk):
             messagebox.showinfo("Sukces", message)
             
             # Tu w przyszłości otworzysz okno czatu!!!!!!!!!!!!!
+
+
             if action_type == "LOGIN":
                 print("Przechodzenie do okna czatu...") 
+                self.current_user = self.entry_user.get()
+                self.frame.destroy()
+                self.main_chat_window()
 
         elif status == "USER_NOT_FOUND":
             self.label_status.configure(text="Nie znaleziono użytkownika", text_color="orange")
