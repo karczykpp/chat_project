@@ -15,8 +15,7 @@ pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 using json = nlohmann::json;
 using namespace std;
 
-char buffer[2048];
-int serverSocket, clientSocket;
+int serverSocket;
 struct sockaddr_in serverAddr, clientAddr;
 socklen_t addr_size;
 
@@ -93,17 +92,17 @@ json loginStage(json received_json)
 
 void *socketThread(void *arg)
 {
-  addr_size = sizeof clientAddr;
-  clientSocket = accept(serverSocket, (struct sockaddr *)&clientAddr, &addr_size);
+  char buffer[2048];
+  int newSocket = *((int *)arg);
   while (true)
   {
-    if (clientSocket == -1)
+    if (newSocket == -1)
     {
       perror("Accept failed");
       continue;
     }
     memset(buffer, 0, sizeof(buffer));
-    int n = recv(clientSocket, buffer, sizeof(buffer) - 1, 0);
+    int n = recv(newSocket, buffer, sizeof(buffer) - 1, 0);
     if (n > 0)
     {
       cout << "Received data: " << buffer << std::endl;
@@ -128,7 +127,7 @@ void *socketThread(void *arg)
         }
 
         string response_str = response.dump();
-        send(clientSocket, response_str.c_str(), response_str.size(), 0);
+        send(newSocket, response_str.c_str(), response_str.size(), 0);
       }
       catch (json::parse_error &e)
       {
@@ -137,7 +136,7 @@ void *socketThread(void *arg)
     }
     else
     {
-      close(clientSocket);
+      close(newSocket);
       cout << "Connection closed." << std::endl;
       break;
     }
@@ -180,6 +179,8 @@ int main(void)
 
   while (true)
   {
+    addr_size = sizeof clientAddr;
+    int clientSocket = accept(serverSocket, (struct sockaddr *)&clientAddr, &addr_size);
     if (pthread_create(&thread_id, NULL, socketThread, &clientSocket) != 0)
       printf("Failed to create thread\n");
 
