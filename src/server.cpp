@@ -10,32 +10,30 @@
 #include <iostream>
 #include <sqlite3.h>
 #include <pthread.h>
-
-pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+#include <vector>
+#include <string>
+#include <mutex>
+#include <utility>
 using json = nlohmann::json;
 using namespace std;
 
-int serverSocket;
-struct sockaddr_in serverAddr, clientAddr;
-socklen_t addr_size;
-
-UserManager userManager;
 
 class UserManager
 {
-  public vector<string, int> loggedInUsers;
-  mutex lock;
-
-  public void addUser(int socketfd, string username)
-  {
+private:
+    vector<pair<string, int>> loggedInUsers;
+    pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+public:
+    void addUser(int socketfd, string username)
+    {
     pthread_mutex_lock(&lock);
     loggedInUsers.push_back(make_pair(username, socketfd));
     cout << "[UserManager] Dodano: " << username << " z socketfd: " << socketfd << endl;
     pthread_mutex_unlock(&lock);
-  }
+    }
 
-  public void removeUser(int socketfd)
-  {
+    void removeUser(int socketfd)
+    { 
     pthread_mutex_lock(&lock);
     for (auto it = loggedInUsers.begin(); it != loggedInUsers.end(); ++it)
     {
@@ -47,71 +45,77 @@ class UserManager
       }
     }
     pthread_mutex_unlock(&lock);
-  }
+    } 
 
-  int getSocket(string username)
-  {
-    pthread_mutex_lock(&lock);
-    int foundSocket = -1;
-
-    for (const auto &user : loggedInUsers)
+    int getSocket(string username)
     {
-      if (user.first == username)
+      pthread_mutex_lock(&lock);
+      int foundSocket = -1;
+
+      for (const auto &user : loggedInUsers)
       {
-        foundSocket = user.second;
-        break;
+        if (user.first == username)
+        {
+          foundSocket = user.second;
+          break;
+        }
       }
+      pthread_mutex_unlock(&lock);
+      return foundSocket;
     }
-    pthread_mutex_unlock(&lock);
-    return foundSocket;
-  }
 
-  string getUsername(int socketfd)
-  {
-    pthread_mutex_lock(&lock);
-    string foundName = "";
-
-    for (const auto &user : loggedInUsers)
+    string getUsername(int socketfd)
     {
-      if (user.second == socketfd)
+      pthread_mutex_lock(&lock);
+      string foundName = "";
+
+      for (const auto &user : loggedInUsers)
       {
-        foundName = user.first;
-        break;
+        if (user.second == socketfd)
+        {
+          foundName = user.first;
+          break;
+        }
       }
+      pthread_mutex_unlock(&lock);
+      return foundName;
     }
-    pthread_mutex_unlock(&lock);
-    return foundName;
-  }
 
-  string getOnlineList()
-  {
-    pthread_mutex_lock(&lock);
-    string list = "";
-    for (const auto &user : loggedInUsers)
+    string getOnlineList()
     {
-      list += user.first + ",";
-    }
-    if (!list.empty())
-    {
-      list.pop_back();
-    }
-    pthread_mutex_unlock(&lock);
-    return list;
-  }
-
-  void broadcast(string message, int senderSocket)
-  {
-    pthread_mutex_lock(&lock);
-    for (const auto &user : loggedInUsers)
-    {
-      if (user.second != senderSocket)
+      pthread_mutex_lock(&lock);
+      string list = "";
+      for (const auto &user : loggedInUsers)
       {
-        send(user.second, message.c_str(), message.length(), 0);
+        list += user.first + ",";
       }
+      if (!list.empty())
+      {
+        list.pop_back();
+      }
+      pthread_mutex_unlock(&lock);
+      return list;
     }
-    pthread_mutex_unlock(&lock);
-  }
+
+    void broadcast(string message, int senderSocket)
+    {
+      pthread_mutex_lock(&lock);
+      for (const auto &user : loggedInUsers)
+      {
+        if (user.second != senderSocket)
+        {
+          send(user.second, message.c_str(), message.length(), 0);
+        }
+      }
+      pthread_mutex_unlock(&lock);
+    }
 };
+
+int serverSocket;
+struct sockaddr_in serverAddr, clientAddr;
+socklen_t addr_size;
+
+UserManager userManager;
 
 json registerStage(json received_json)
 {
@@ -170,7 +174,8 @@ json loginStage(json received_json, int socketfd)
           {
             const unsigned char *usernameVal = sqlite3_column_text(stmtUsers, 0);
             string userIter = string(reinterpret_cast<const char *>(usernameVal));
-            usersList += userIter + ",";
+            if (userIter != user)
+              usersList += userIter + ",";
           }
           if (!usersList.empty())
           {
@@ -204,6 +209,25 @@ json loginStage(json received_json, int socketfd)
   return response;
 }
 
+json logoutStage(int socketfd)
+{
+  json response;
+  string username = userManager.getUsername(socketfd);
+  cout << "[LogoutStage] User to logout: " << username << " with socketfd: " << socketfd << endl;
+  cout << userManager.getOnlineList() << endl;
+  if (!username.empty())
+  {
+    userManager.removeUser(socketfd);
+    response["status"] = "SUCCESS";
+    response["message"] = "Logout successful.";
+  }
+  else
+  {
+    response["status"] = "ERROR";
+    response["message"] = "User not logged in.";
+  }
+  return response;
+}
 void *socketThread(void *arg)
 {
   char buffer[2048];
@@ -235,6 +259,11 @@ void *socketThread(void *arg)
         {
           response = loginStage(received_json, newSocket);
         }
+        else if (command == "LOGOUT")
+        {
+          response = logoutStage(newSocket);
+          cout << "Connection closed." << std::endl;
+        }
         else
         {
           response["status"] = "ERROR";
@@ -251,6 +280,7 @@ void *socketThread(void *arg)
     }
     else
     {
+      userManager.removeUser(newSocket);
       close(newSocket);
       cout << "Connection closed." << std::endl;
       break;

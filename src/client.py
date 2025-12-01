@@ -13,6 +13,8 @@ class ModernChatClient(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.current_user = ""
+        self.all_users = []
+        self.online_users = []
 
         self.title("Komunikator - Klient")
         self.geometry("900x500")
@@ -67,8 +69,10 @@ class ModernChatClient(ctk.CTk):
         
         self.sidebar_frame.grid_rowconfigure(1, weight=1)
 
-        dummy_friends = ["Janek", "Ania", "Marek_Dev", "Grupa IT"]
-        for friend in dummy_friends:
+        print("Wszyscy uzytkownicy: ", self.all_users)
+        print("Online uzytkownicy: ", self.online_users)
+        friends = self.all_users.split(",")
+        for friend in friends:
             btn = ctk.CTkButton(self.friends_list, text=friend, fg_color="transparent", border_width=1, text_color=("gray10", "#DCE4EE"))
             btn.pack(pady=5, padx=5, fill="x")
 
@@ -102,16 +106,6 @@ class ModernChatClient(ctk.CTk):
         self.btn_send = ctk.CTkButton(self.entry_frame, text="Wyślij ➤", width=80, command=self.send_message_gui)
         self.btn_send.pack(side="right")
     
-    def action_logout(self):
-        self.sidebar_frame.destroy()
-        self.main_area.destroy()
- 
-        self.grid_columnconfigure(0, weight=0)
-        self.grid_columnconfigure(1, weight=0)
-        self.grid_rowconfigure(0, weight=0)
-        
-        self.create_widgets()
-    
     def send_message_gui(self):
         msg = self.entry_msg.get()
         if msg:
@@ -123,12 +117,20 @@ class ModernChatClient(ctk.CTk):
             # TUTAJ W PRZYSZŁOŚCI WYŚLESZ JSON DO SERWERA C++
 
     def send_request(self, command):
-        username = self.entry_user.get()
-        password = self.entry_pass.get()
 
-        if not username or not password:
-            messagebox.showwarning("Brak danych", "Wypełnij login i hasło!")
-            return None
+        username = ""
+        password = ""
+
+        if command in ["LOGIN", "REGISTER"]:
+            username = self.entry_user.get()
+            password = self.entry_pass.get()
+
+            if not username or not password:
+                messagebox.showwarning("Brak danych", "Wypełnij login i hasło!")
+                return None
+        else:
+            username = self.current_user
+            password = ""
 
         request_data = {
             "command": command,
@@ -153,11 +155,23 @@ class ModernChatClient(ctk.CTk):
 
     def action_login(self):
         response = self.send_request("LOGIN")
+        print(response)
+        all_users = response.get("all_users", [])
+        self.all_users = all_users
+        print(self.all_users, "XXXX")
+        online_users = response.get("online_users", [])
+        self.online_users = online_users
         self.handle_response(response, "LOGIN")
 
     def action_register(self):
         response = self.send_request("REGISTER")
         self.handle_response(response, "REGISTER")
+
+    def action_logout(self):
+        print("Wylogowywanie użytkownika...")
+        response = self.send_request("LOGOUT")
+        print(response)
+        self.handle_response(response, "LOGOUT")
 
     def handle_response(self, response, action_type):
         if not response: return
@@ -165,18 +179,32 @@ class ModernChatClient(ctk.CTk):
         status = response.get("status")
         message = response.get("message")
 
+        print("Handling response:", response)
+        print("Action type:", action_type, status, message)
+
         if status == "SUCCESS":
-            self.label_status.configure(text=f"Sukces: {message}", text_color="green")
+            print("Operacja zakończona sukcesem.")
             messagebox.showinfo("Sukces", message)
             
             # Tu w przyszłości otworzysz okno czatu!!!!!!!!!!!!!
-
 
             if action_type == "LOGIN":
                 print("Przechodzenie do okna czatu...") 
                 self.current_user = self.entry_user.get()
                 self.frame.destroy()
                 self.main_chat_window()
+            elif action_type == "LOGOUT":
+                print("Wylogowywanie...")
+                if hasattr(self, 'sidebar_frame'): self.sidebar_frame.destroy()
+                if hasattr(self, 'main_area'): self.main_area.destroy()
+
+                self.grid_columnconfigure(0, weight=0)
+                self.grid_columnconfigure(1, weight=0)
+                self.grid_rowconfigure(0, weight=0)
+
+                self.current_user = ""
+
+                self.create_widgets()
 
         elif status == "USER_NOT_FOUND":
             self.label_status.configure(text="Nie znaleziono użytkownika", text_color="orange")
