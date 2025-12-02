@@ -2,6 +2,7 @@ import customtkinter as ctk
 import socket
 import json
 from tkinter import messagebox
+import threading
 
 HOST = '127.0.0.1'
 PORT = 1104 
@@ -14,7 +15,7 @@ class ModernChatClient(ctk.CTk):
         super().__init__()
         self.current_user = ""
         self.all_users = []
-        self.online_users = []
+        self.online_friends = []
 
         self.title("Komunikator - Klient")
         self.geometry("900x500")
@@ -72,9 +73,33 @@ class ModernChatClient(ctk.CTk):
         print("Wszyscy uzytkownicy: ", self.all_users)
         print("Online uzytkownicy: ", self.online_users)
         friends = self.all_users.split(",")
+        self.online_friends = self.online_users.split(",") if self.online_users else []
+
+
         for friend in friends:
-            btn = ctk.CTkButton(self.friends_list, text=friend, fg_color="transparent", border_width=1, text_color=("gray10", "#DCE4EE"))
-            btn.pack(pady=5, padx=5, fill="x")
+            if friend == self.current_user:
+                continue
+
+            if friend in self.online_friends:
+                display_text = friend
+                text_col = "#2cc985"          
+                hover_col = "#2E8B57"     
+            else:
+                display_text = friend
+                text_col = "gray60"         
+                hover_col = "gray30"
+
+            btn = ctk.CTkButton(self.friends_list, 
+                                text=display_text, 
+                                fg_color="transparent", 
+                                border_width=0,        
+                                text_color=text_col,   
+                                hover_color=hover_col, 
+                                anchor="w",          
+                                height=35,            
+                                font=ctk.CTkFont(size=14))
+            
+            btn.pack(pady=2, padx=5, fill="x")
 
         self.user_info_label = ctk.CTkLabel(self.sidebar_frame, text=f"{self.current_user}", anchor="w")
         self.user_info_label.grid(row=2, column=0, padx=20, pady=(10, 0), sticky="ew")
@@ -152,14 +177,41 @@ class ModernChatClient(ctk.CTk):
         except Exception as e:
             messagebox.showerror("Błąd sieci", str(e))
             return None
+    
+    def listen_for_messages(self):
+        while True:
+            try:
+                buffer = self.sock.recv(2048)
+
+                if not buffer:
+                    break
+                message = buffer.decode('utf-8')
+
+                response = json.loads(message)
+                print("Otrzymano wiadomość od serwera:", response)
+                print(response.get("command"))
+                
+                self.handle_server_message(response)
+            except Exception as e:
+                print("Błąd podczas odbierania wiadomości:", e)
+                break
+    
+    def handle_server_message(self, message):
+        if message.get("command") == "USER_ONLINE":
+            username = message.get("username")
+            if username and username not in self.online_users:
+                help_online = message.get("online_users")
+                self.online_friends = help_online.split(",") if help_online else []
+                print("Aktualizacja listy online:", self.online_friends)
+
+
 
     def action_login(self):
         response = self.send_request("LOGIN")
         print(response)
-        all_users = response.get("all_users", [])
+        all_users = response.get("all_users")
         self.all_users = all_users
-        print(self.all_users, "XXXX")
-        online_users = response.get("online_users", [])
+        online_users = response.get("online_users")
         self.online_users = online_users
         self.handle_response(response, "LOGIN")
 
@@ -193,6 +245,9 @@ class ModernChatClient(ctk.CTk):
                 self.current_user = self.entry_user.get()
                 self.frame.destroy()
                 self.main_chat_window()
+
+                receive_thread = threading.Thread(target=self.listen_for_messages, daemon=True)
+                receive_thread.start()
             elif action_type == "LOGOUT":
                 print("Wylogowywanie...")
                 if hasattr(self, 'sidebar_frame'): self.sidebar_frame.destroy()

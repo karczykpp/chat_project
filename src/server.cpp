@@ -188,6 +188,11 @@ json loginStage(json received_json, int socketfd)
         response["status"] = "SUCCESS";
         response["message"] = "Login successful.";
         response["online_users"] = userManager.getOnlineList();
+        json broadcast_msg;
+        broadcast_msg["command"] = "USER_ONLINE";
+        broadcast_msg["username"] = user;
+        broadcast_msg["online_users"] = userManager.getOnlineList();
+        userManager.broadcast(broadcast_msg.dump(), socketfd);
       }
       else
       {
