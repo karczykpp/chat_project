@@ -17,23 +17,23 @@
 using json = nlohmann::json;
 using namespace std;
 
-
 class UserManager
 {
 private:
-    vector<pair<string, int>> loggedInUsers;
-    pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+  vector<pair<string, int>> loggedInUsers;
+  pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+
 public:
-    void addUser(int socketfd, string username)
-    {
+  void addUser(int socketfd, string username)
+  {
     pthread_mutex_lock(&lock);
     loggedInUsers.push_back(make_pair(username, socketfd));
     cout << "[UserManager] Dodano: " << username << " z socketfd: " << socketfd << endl;
     pthread_mutex_unlock(&lock);
-    }
+  }
 
-    void removeUser(int socketfd)
-    { 
+  void removeUser(int socketfd)
+  {
     pthread_mutex_lock(&lock);
     for (auto it = loggedInUsers.begin(); it != loggedInUsers.end(); ++it)
     {
@@ -45,70 +45,70 @@ public:
       }
     }
     pthread_mutex_unlock(&lock);
-    } 
+  }
 
-    int getSocket(string username)
+  int getSocket(string username)
+  {
+    pthread_mutex_lock(&lock);
+    int foundSocket = -1;
+
+    for (const auto &user : loggedInUsers)
     {
-      pthread_mutex_lock(&lock);
-      int foundSocket = -1;
-
-      for (const auto &user : loggedInUsers)
+      if (user.first == username)
       {
-        if (user.first == username)
-        {
-          foundSocket = user.second;
-          break;
-        }
+        foundSocket = user.second;
+        break;
       }
-      pthread_mutex_unlock(&lock);
-      return foundSocket;
     }
+    pthread_mutex_unlock(&lock);
+    return foundSocket;
+  }
 
-    string getUsername(int socketfd)
+  string getUsername(int socketfd)
+  {
+    pthread_mutex_lock(&lock);
+    string foundName = "";
+
+    for (const auto &user : loggedInUsers)
     {
-      pthread_mutex_lock(&lock);
-      string foundName = "";
-
-      for (const auto &user : loggedInUsers)
+      if (user.second == socketfd)
       {
-        if (user.second == socketfd)
-        {
-          foundName = user.first;
-          break;
-        }
+        foundName = user.first;
+        break;
       }
-      pthread_mutex_unlock(&lock);
-      return foundName;
     }
+    pthread_mutex_unlock(&lock);
+    return foundName;
+  }
 
-    string getOnlineList()
+  string getOnlineList()
+  {
+    pthread_mutex_lock(&lock);
+    string list = "";
+    for (const auto &user : loggedInUsers)
     {
-      pthread_mutex_lock(&lock);
-      string list = "";
-      for (const auto &user : loggedInUsers)
-      {
-        list += user.first + ",";
-      }
-      if (!list.empty())
-      {
-        list.pop_back();
-      }
-      pthread_mutex_unlock(&lock);
-      return list;
+      list += user.first + ",";
     }
-
-    void broadcast(string message, int senderSocket)
+    if (!list.empty())
     {
-      pthread_mutex_lock(&lock);
-      for (const auto &user : loggedInUsers)
-      {
-        if (user.second != senderSocket)
-        {
-          send(user.second, message.c_str(), message.length(), 0);
-        }
-      }
-      pthread_mutex_unlock(&lock);
+      list.pop_back();
     }
+    pthread_mutex_unlock(&lock);
+    return list;
+  }
+
+  void broadcast(string message, int senderSocket)
+  {
+    pthread_mutex_lock(&lock);
+    for (const auto &user : loggedInUsers)
+    {
+      if (user.second != senderSocket)
+      {
+        send(user.second, message.c_str(), message.length(), 0);
+      }
+    }
+    pthread_mutex_unlock(&lock);
+  }
 };
 
 int serverSocket;
@@ -225,6 +225,12 @@ json logoutStage(int socketfd)
     userManager.removeUser(socketfd);
     response["status"] = "SUCCESS";
     response["message"] = "Logout successful.";
+    json broadcast_msg;
+    broadcast_msg["command"] = "USER_ONLINE";
+    broadcast_msg["username"] = username;
+    broadcast_msg["online_users"] = userManager.getOnlineList();
+    cout << broadcast_msg.dump() << endl;
+    userManager.broadcast(broadcast_msg.dump(), socketfd);
   }
   else
   {
@@ -233,6 +239,38 @@ json logoutStage(int socketfd)
   }
   return response;
 }
+
+json getMessages(json received_json)
+{
+  json response;
+  string receiver = received_json.value("receiver");
+  string sender = received_json.value("sender");
+
+  sqlite3 *DB;
+  char *messageError;
+  int exit = sqlite3_open("chat_database.db", &DB);
+  string sqlGetMessages =
+      "SELECT * FROM MESSAGES WHERE SENDER='" + sender + " AND RECEIVER='" + receiver + " OR SENDER='" + receiver + " AND RECEIVER='" + sender + " ORDER BY TIMESTAMP ASC';";
+  sqlite3_stmt *stmtUsers;
+  if (sqlite3_prepare_v2(DB, queryUsers.c_str(), -1, &stmtUsers, NULL) == SQLITE_OK)
+  {
+    string usersList = "";
+    while (sqlite3_step(stmtUsers) == SQLITE_ROW)
+    {
+      const unsigned char *usernameVal = sqlite3_column_text(stmtUsers, 0);
+      string userIter = string(reinterpret_cast<const char *>(usernameVal));
+      if (userIter != user)
+        usersList += userIter + ",";
+    }
+    if (!usersList.empty())
+    {
+      usersList.pop_back();
+    }
+    response["all_users"] = usersList;
+  }
+  sqlite3_finalize(stmtUsers);
+}
+
 void *socketThread(void *arg)
 {
   char buffer[2048];
@@ -276,6 +314,7 @@ void *socketThread(void *arg)
         }
 
         string response_str = response.dump();
+        cout << "Odpowiedz" << response_str << endl;
         send(newSocket, response_str.c_str(), response_str.size(), 0);
       }
       catch (json::parse_error &e)
@@ -317,7 +356,7 @@ int main(void)
     return 1;
   }
 
-  if (listen(serverSocket, 10) == 0)
+  if (listen(serverSocket, 100) == 0)
   {
     cout << "Listening on port 1100..." << std::endl;
   }

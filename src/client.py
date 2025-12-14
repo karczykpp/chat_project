@@ -72,34 +72,9 @@ class ModernChatClient(ctk.CTk):
 
         print("Wszyscy uzytkownicy: ", self.all_users)
         print("Online uzytkownicy: ", self.online_users)
-        friends = self.all_users.split(",")
-        self.online_friends = self.online_users.split(",") if self.online_users else []
 
 
-        for friend in friends:
-            if friend == self.current_user:
-                continue
-
-            if friend in self.online_friends:
-                display_text = friend
-                text_col = "#2cc985"          
-                hover_col = "#2E8B57"     
-            else:
-                display_text = friend
-                text_col = "gray60"         
-                hover_col = "gray30"
-
-            btn = ctk.CTkButton(self.friends_list, 
-                                text=display_text, 
-                                fg_color="transparent", 
-                                border_width=0,        
-                                text_color=text_col,   
-                                hover_color=hover_col, 
-                                anchor="w",          
-                                height=35,            
-                                font=ctk.CTkFont(size=14))
-            
-            btn.pack(pady=2, padx=5, fill="x")
+        self.update_friends_ui()
 
         self.user_info_label = ctk.CTkLabel(self.sidebar_frame, text=f"{self.current_user}", anchor="w")
         self.user_info_label.grid(row=2, column=0, padx=20, pady=(10, 0), sticky="ew")
@@ -141,6 +116,41 @@ class ModernChatClient(ctk.CTk):
             self.entry_msg.delete(0, "end")
             # TUTAJ W PRZYSZŁOŚCI WYŚLESZ JSON DO SERWERA C++
 
+    def update_friends_ui(self):
+        """Przerysowuje listę znajomych na podstawie aktualnych danych"""
+        
+        if not hasattr(self, 'friends_list') or not self.friends_list.winfo_exists():
+            return
+
+        for widget in self.friends_list.winfo_children():
+            widget.destroy()
+        
+        raw_all = self.all_users or ""
+        raw_online = self.online_users or ""
+
+        all_friends = [x.strip() for x in raw_all.split(",") if x.strip()]
+        online_friends = [x.strip() for x in raw_online.split(",") if x.strip()]
+        print("Aktualizacja UI znajomych:")
+        print("Wszyscy znajomi:", all_friends)
+        print("Online znajomi:", online_friends)
+        for friend in all_friends:
+            if friend == self.current_user:
+                continue
+
+            if friend in online_friends:
+                display_text = f"[+] {friend}"  
+                text_col = "#2cc985"         
+            else:
+                display_text = f"[ ] {friend}"  
+                text_col = "gray60"          
+
+            btn = ctk.CTkButton(self.friends_list, 
+                                text=display_text, 
+                                fg_color="transparent", 
+                                text_color=text_col, 
+                                anchor="w", 
+                                height=30)
+            btn.pack(pady=2, padx=5, fill="x")
     def send_request(self, command):
 
         username = ""
@@ -188,26 +198,36 @@ class ModernChatClient(ctk.CTk):
                 message = buffer.decode('utf-8')
 
                 response = json.loads(message)
+                if response.get("status") == "SUCCESS" and "Logout" in response.get("message", ""):
+                    continue
+                print("UŻYTKOWNICY ONLINE")
                 print("Otrzymano wiadomość od serwera:", response)
+                
                 print(response.get("command"))
                 
                 self.handle_server_message(response)
+            except OSError:
+                print("Socket zamknięty - kończę wątek nasłuchujący.")
+                break
             except Exception as e:
                 print("Błąd podczas odbierania wiadomości:", e)
                 break
     
     def handle_server_message(self, message):
+        print("FUNKCJA UZYTKOWNIKOW")
         if message.get("command") == "USER_ONLINE":
             username = message.get("username")
-            if username and username not in self.online_users:
+            if username:
                 help_online = message.get("online_users")
-                self.online_friends = help_online.split(",") if help_online else []
-                print("Aktualizacja listy online:", self.online_friends)
+                self.online_users = help_online
+                print("Zaktualizowana lista online użytkowników:", self.online_users)
+                self.after(0, self.update_friends_ui)
 
 
 
     def action_login(self):
         response = self.send_request("LOGIN")
+        print("LOGOOWANIE!")
         print(response)
         all_users = response.get("all_users")
         self.all_users = all_users
@@ -222,8 +242,26 @@ class ModernChatClient(ctk.CTk):
     def action_logout(self):
         print("Wylogowywanie użytkownika...")
         response = self.send_request("LOGOUT")
+        print("WYLOGOWYWANIE")
+        self.sock.close()
         print(response)
-        self.handle_response(response, "LOGOUT")
+        print("Wylogowywanie...")
+        if hasattr(self, 'sidebar_frame'): self.sidebar_frame.destroy()
+        if hasattr(self, 'main_area'): self.main_area.destroy()
+
+        self.grid_columnconfigure(0, weight=0)
+        self.grid_columnconfigure(1, weight=0)
+        self.grid_rowconfigure(0, weight=0)
+
+        self.current_user = ""
+
+        self.create_widgets()
+        try:
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.sock.connect((HOST, PORT))
+        except Exception as e:
+            messagebox.showerror("Błąd", "Nie można połączyć się ponownie z serwerem.")
+            self.destroy()
 
     def handle_response(self, response, action_type):
         if not response: return
@@ -248,18 +286,6 @@ class ModernChatClient(ctk.CTk):
 
                 receive_thread = threading.Thread(target=self.listen_for_messages, daemon=True)
                 receive_thread.start()
-            elif action_type == "LOGOUT":
-                print("Wylogowywanie...")
-                if hasattr(self, 'sidebar_frame'): self.sidebar_frame.destroy()
-                if hasattr(self, 'main_area'): self.main_area.destroy()
-
-                self.grid_columnconfigure(0, weight=0)
-                self.grid_columnconfigure(1, weight=0)
-                self.grid_rowconfigure(0, weight=0)
-
-                self.current_user = ""
-
-                self.create_widgets()
 
         elif status == "USER_NOT_FOUND":
             self.label_status.configure(text="Nie znaleziono użytkownika", text_color="orange")
