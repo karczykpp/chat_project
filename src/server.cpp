@@ -243,32 +243,97 @@ json logoutStage(int socketfd)
 json getMessages(json received_json)
 {
   json response;
-  string receiver = received_json.value("receiver");
-  string sender = received_json.value("sender");
+  string receiver = received_json.value("receiver", "");
+  string sender = received_json.value("sender", "");
 
   sqlite3 *DB;
+  sqlite3_stmt *stmt;
   char *messageError;
+
   int exit = sqlite3_open("chat_database.db", &DB);
   string sqlGetMessages =
-      "SELECT * FROM MESSAGES WHERE SENDER='" + sender + " AND RECEIVER='" + receiver + " OR SENDER='" + receiver + " AND RECEIVER='" + sender + " ORDER BY TIMESTAMP ASC';";
-  sqlite3_stmt *stmtUsers;
-  if (sqlite3_prepare_v2(DB, queryUsers.c_str(), -1, &stmtUsers, NULL) == SQLITE_OK)
+      "SELECT SENDER, RECEIVER, CONTENT, TIMESTAMP FROM MESSAGES "
+      "WHERE (SENDER=? AND RECEIVER=?) "
+      "OR (SENDER=? AND RECEIVER=?) "
+      "ORDER BY TIMESTAMP ASC;";
+  int rc = sqlite3_prepare_v2(DB, sqlGetMessages.c_str(), -1, &stmt, nullptr);
+  if (rc != SQLITE_OK)
   {
-    string usersList = "";
-    while (sqlite3_step(stmtUsers) == SQLITE_ROW)
-    {
-      const unsigned char *usernameVal = sqlite3_column_text(stmtUsers, 0);
-      string userIter = string(reinterpret_cast<const char *>(usernameVal));
-      if (userIter != user)
-        usersList += userIter + ",";
-    }
-    if (!usersList.empty())
-    {
-      usersList.pop_back();
-    }
-    response["all_users"] = usersList;
+    cerr << "SQL error: " << sqlite3_errmsg(DB) << endl;
+    return 1;
   }
-  sqlite3_finalize(stmtUsers);
+  sqlite3_bind_text(stmt, 1, sender.c_str(), -1, SQLITE_STATIC);
+  sqlite3_bind_text(stmt, 2, receiver.c_str(), -1, SQLITE_STATIC);
+  sqlite3_bind_text(stmt, 3, receiver.c_str(), -1, SQLITE_STATIC);
+  sqlite3_bind_text(stmt, 4, sender.c_str(), -1, SQLITE_STATIC);
+
+  json chat_history = json::array();
+  while (sqlite3_step(stmt) == SQLITE_ROW)
+  {
+    json msg;
+    const char *sender = (const char *)sqlite3_column_text(stmt, 0);
+    const char *receiver = (const char *)sqlite3_column_text(stmt, 1);
+    const char *content = (const char *)sqlite3_column_text(stmt, 2);
+    const char *timestamp = (const char *)sqlite3_column_text(stmt, 3);
+
+    msg["sender"] = sender;
+    msg["receiver"] = receiver;
+    msg["content"] = content;
+    msg["time"] = timestamp;
+    chat_history.push_back(msg);
+  }
+  cout << "Historia wiadomości pomiędzy: " << sender << ": " << receiver << endl
+       << chat_history << endl;
+  if (chat_history.empty()) 
+  {
+      json info;
+      info["status"] = "EMPTY";
+      info["content"] = "Brak wiadomości";
+      chat_history.push_back(info); 
+      cout<<chat_history<<endl;
+  }     
+  sqlite3_finalize(stmt);
+  sqlite3_close(DB);
+  return chat_history;
+}
+
+json sendMessage(json received_json)
+{
+  json response;
+  string receiver = received_json.value("receiver", "");
+  string sender = received_json.value("sender", "");
+  string content = received_json.value("content", "");
+
+  sqlite3 *DB;
+  sqlite3_stmt *stmt;
+  if (sqlite3_open("chat_database.db", &DB) != SQLITE_OK)
+  {
+    return {{"status", "ERROR"}, {"message", "DB Open Error"}};
+  }
+  string sqlInsert = "INSERT INTO MESSAGES (SENDER, RECEIVER, CONTENT, TIMESTAMP) "
+               "VALUES (?, ?, ?, DATETIME('now', 'localtime'));";
+  if (sqlite3_prepare_v2(DB, sqlInsert.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
+      response["status"] = "ERROR";
+      response["message"] = sqlite3_errmsg(DB);
+      sqlite3_close(DB);
+      return response;
+  }
+  sqlite3_bind_text(stmt, 1, sender.c_str(), -1, SQLITE_STATIC);
+  sqlite3_bind_text(stmt, 2, receiver.c_str(), -1, SQLITE_STATIC);
+  sqlite3_bind_text(stmt, 3, content.c_str(), -1, SQLITE_STATIC);
+  if (sqlite3_step(stmt) != SQLITE_DONE)
+  {
+    response["status"] = "ERROR";
+    response["message"] = sqlite3_errmsg(DB);
+  }
+  else
+  {
+    response["status"] = "SUCCESS";
+    response["message"] = "Message sent";
+  }
+  sqlite3_finalize(stmt);
+  sqlite3_close(DB);
+  return response;
 }
 
 void *socketThread(void *arg)
@@ -307,13 +372,23 @@ void *socketThread(void *arg)
           response = logoutStage(newSocket);
           cout << "Connection closed." << std::endl;
         }
+        else if (command == "GET_MESSAGES")
+        {
+          response = getMessages(received_json);
+          cout << "Historia: " << response << endl;
+        }
+        else if (command == "SEND_MESSAGE")
+        {
+          response = sendMessage(received_json);
+          cout<<"Odpowiedz: "<<response<<endl;
+        }
         else
         {
           response["status"] = "ERROR";
           response["message"] = "Unknown command.";
         }
 
-        string response_str = response.dump();
+        string response_str = response.dump() + "\n";
         cout << "Odpowiedz" << response_str << endl;
         send(newSocket, response_str.c_str(), response_str.size(), 0);
       }

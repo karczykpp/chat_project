@@ -51,38 +51,23 @@ int main()
     sqlite3_bind_text(stmt, 3, receiver.c_str(), -1, SQLITE_STATIC);
     sqlite3_bind_text(stmt, 4, sender.c_str(), -1, SQLITE_STATIC);
 
+    json chat_history = json::array();
     while (sqlite3_step(stmt) == SQLITE_ROW)
     {
-        string timeStr = (const char *)sqlite3_column_text(stmt, 4);
-        string dbSender = (const char *)sqlite3_column_text(stmt, 1);
-        string content = (const char *)sqlite3_column_text(stmt, 3);
+        json msg;
+        const char* sender_val    = (const char*)sqlite3_column_text(stmt, 1);
+        const char* receiver_val  = (const char*)sqlite3_column_text(stmt, 2);
+        const char* content_val   = (const char*)sqlite3_column_text(stmt, 3);
+        const char* timestamp_val = (const char*)sqlite3_column_text(stmt, 4);
 
-        // ====== PARSOWANIE DATY ======
-        std::tm tm{};
-        std::istringstream ss(timeStr);
-        ss >> std::get_time(&tm, "%Y-%m-%d %H:%M:%S");
-
-        int rok = tm.tm_year + 1900;
-        int miesiac = tm.tm_mon + 1;
-        int dzien = tm.tm_mday;
-        int godzina = tm.tm_hour;
-        int minuta = tm.tm_min;
-        int sekunda = tm.tm_sec;
-        // =============================
-
-        // DEBUG – zobaczysz, że to działa
-        cout << "DATA: "
-             << dzien << "." << miesiac << "." << rok << " "
-             << godzina << ":" << minuta << ":" << sekunda << endl;
-
-        // normalne wypisanie wiadomości
-        if (dbSender == sender)
-            cout << "TY: " << content << endl;
-        else
-            cout << dbSender << ": " << content << endl;
-
-        cout << "--------------------" << endl;
+        msg["sender"]    = sender_val    ? sender_val    : "";
+        msg["receiver"]  = receiver_val  ? receiver_val  : "";
+        msg["content"]   = content_val   ? content_val   : "";
+        msg["timestamp"] = timestamp_val ? timestamp_val : "";
+        chat_history.push_back(msg);
     }
+    string json_payload = chat_history.dump(4);
+    cout<<json_payload<<endl;
     sqlite3_finalize(stmt);
     sqlite3_close(DB);
 

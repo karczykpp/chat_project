@@ -3,6 +3,7 @@ import socket
 import json
 from tkinter import messagebox
 import threading
+from datetime import datetime
 
 HOST = '127.0.0.1'
 PORT = 1104 
@@ -109,12 +110,31 @@ class ModernChatClient(ctk.CTk):
     def send_message_gui(self):
         msg = self.entry_msg.get()
         if msg:
-            self.chat_history.configure(state="normal")
-            self.chat_history.insert("end", f"Ja: {msg}\n")
-            self.chat_history.configure(state="disabled")
-            self.chat_history.see("end")
-            self.entry_msg.delete(0, "end")
-            # TUTAJ W PRZYSZŁOŚCI WYŚLESZ JSON DO SERWERA C++
+            self.send_message_request(msg)
+            
+    def send_message_request(self, msg):
+        if not self.current_chat_friend:
+            messagebox.showwarning("Błąd", "Wybierz kogoś z listy kontaktów")
+            return 
+        message_text = msg
+        if not message_text.strip():
+            return
+        
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        request_data = {
+            "command": "SEND_MESSAGE",
+            "sender": self.current_user,
+            "receiver": self.current_chat_friend,
+            "content": message_text,
+            "timestamp": now
+        }
+
+        msg_to_server = json.dumps(request_data) + "\n"
+        self.sock.sendall(msg_to_server.encode('utf-8'))
+        print(msg_to_server)
+        self.entry_msg.delete(0, "end")
+        self.action_get_messages(self.current_chat_friend)
+        
 
     def update_friends_ui(self):
         """Przerysowuje listę znajomych na podstawie aktualnych danych"""
@@ -149,8 +169,24 @@ class ModernChatClient(ctk.CTk):
                                 fg_color="transparent", 
                                 text_color=text_col, 
                                 anchor="w", 
+                                command=lambda f=friend: self.action_get_messages(f),
                                 height=30)
             btn.pack(pady=2, padx=5, fill="x")
+
+    def send_request_logout(self):
+        username = self.current_user
+        command = "LOGOUT"
+        request_data = {
+            "command": command,
+            "username": username,
+        }
+        try:
+            msg = json.dumps(request_data) 
+            self.sock.sendall(msg.encode('utf-8'))
+        except Exception as e:
+            messagebox.showerror("Błąd sieci", str(e))
+            return None
+    
     def send_request(self, command):
 
         username = ""
@@ -223,8 +259,6 @@ class ModernChatClient(ctk.CTk):
                 print("Zaktualizowana lista online użytkowników:", self.online_users)
                 self.after(0, self.update_friends_ui)
 
-
-
     def action_login(self):
         response = self.send_request("LOGIN")
         print("LOGOOWANIE!")
@@ -241,11 +275,11 @@ class ModernChatClient(ctk.CTk):
 
     def action_logout(self):
         print("Wylogowywanie użytkownika...")
-        response = self.send_request("LOGOUT")
+        response = self.send_request_logout()
         print("WYLOGOWYWANIE")
         self.sock.close()
-        print(response)
         print("Wylogowywanie...")
+
         if hasattr(self, 'sidebar_frame'): self.sidebar_frame.destroy()
         if hasattr(self, 'main_area'): self.main_area.destroy()
 
@@ -262,6 +296,62 @@ class ModernChatClient(ctk.CTk):
         except Exception as e:
             messagebox.showerror("Błąd", "Nie można połączyć się ponownie z serwerem.")
             self.destroy()
+
+    def send_get_message_request(self, friend):
+        self.current_chat_friend = friend
+        sender = self.current_user
+        receiver = friend
+        command = "GET_MESSAGES"
+        request_data = {
+            "sender": sender,
+            "receiver": receiver,
+            "command": command
+        }
+        try:
+            msg = json.dumps(request_data) + "\n"
+            self.sock.sendall(msg.encode('utf-8'))
+            print(msg)
+
+            buffer = self.sock.recv(65536)
+            if not buffer:
+                return None
+            response = json.loads(buffer.decode('utf-8'))
+            print("odpowiedz od servera: ",response)
+            return response
+
+        except Exception as e:
+            messagebox.showerror("Błąd sieci", str(e))
+            return None
+    
+    def action_get_messages(self, friend):
+        print("Receiver to: ", friend)
+        response = self.send_get_message_request(friend)
+        self.chat_history.configure(state="normal")
+        self.chat_history.delete("1.0", "end")
+        self.chat_history.insert("end", f"--- Rozmowa z {friend} ---\n\n")
+
+        print("odpowiedz to: ", response)
+        if response:
+            for msg in response:
+                print(response, type(response))
+                if msg.get("status") == "EMPTY":
+                    self.chat_history.insert("end", "--- Brak historii wiadomości ---\n")
+                    continue
+                sender = msg.get('sender', 'Unknown')
+                content = msg.get('content', '')
+                time = msg.get('time', '')
+
+                line = f"[{time}] {sender}: {content}"
+                print(line)
+                if sender == self.current_user:
+                    display_line = f"[{time}] TY: {content}\n"
+                else:
+                    display_line = f"[{time}] {sender}: {content}\n"
+                self.chat_history.insert("end", display_line)
+        else:
+            self.chat_history.insert("end", "Brak poprzednich wiadomości.\n")
+        self.chat_history.configure(state="disabled")
+        self.chat_history.see("end")
 
     def handle_response(self, response, action_type):
         if not response: return
