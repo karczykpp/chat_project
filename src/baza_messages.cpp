@@ -11,16 +11,18 @@ int main()
     // If you really need to recreate the DB, run a dedicated init script
     // that creates all required tables. For safety we skip unlinking here.
     sqlite3 *DB;
-    string sqlmessages = "CREATE TABLE IF NOT EXISTS MESSAGES("
+    string sqlMessages = "CREATE TABLE IF NOT EXISTS MESSAGES("
                          "ID INTEGER PRIMARY KEY AUTOINCREMENT, "
                          "SENDER TEXT NOT NULL, "
-                         "RECEIVER TEXT NOT NULL, "
+                         "RECEIVER TEXT, "         // Może być NULL dla grup
+                         "GROUP_ID INTEGER, "      // ID grupy z tabeli GROUPS
                          "CONTENT TEXT NOT NULL, "
                          "TIMESTAMP TEXT DEFAULT CURRENT_TIMESTAMP);";
+
     int exit = 0;
     exit = sqlite3_open("chat_database.db", &DB);
     char *messaggeError;
-    exit = sqlite3_exec(DB, sqlmessages.c_str(), NULL, 0, &messaggeError);
+    exit = sqlite3_exec(DB, sqlMessages.c_str(), NULL, 0, &messaggeError);
     if (exit != SQLITE_OK)
     {
         std::cerr << "Error Create Table MESSAGES: " << messaggeError << std::endl;

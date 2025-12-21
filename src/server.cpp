@@ -14,6 +14,8 @@
 #include <string>
 #include <mutex>
 #include <utility>
+#include <ctime>
+
 using json = nlohmann::json;
 using namespace std;
 
@@ -104,8 +106,19 @@ public:
     {
       if (user.second != senderSocket)
       {
-        send(user.second, message.c_str(), message.length(), 0);
+        string messageToSend = message + "\n";
+        send(user.second, messageToSend.c_str(), messageToSend.size(), 0);
       }
+    }
+    pthread_mutex_unlock(&lock);
+  }
+
+  void broadcastToUser(string message, int senderSocket, int receiverSocket)
+  {
+    pthread_mutex_lock(&lock);
+    string messageToSend = message + "\n";
+    if (receiverSocket != -1 && receiverSocket != senderSocket) {
+      send(receiverSocket, messageToSend.c_str(), messageToSend.size(), 0);
     }
     pthread_mutex_unlock(&lock);
   }
@@ -155,6 +168,7 @@ json loginStage(json received_json, int socketfd)
   int exit = sqlite3_open("chat_database.db", &DB);
   string query = "SELECT USERNAME, PASSWORD FROM USERS WHERE USERNAME='" + user + "';";
   sqlite3_stmt *stmt;
+  string usersList = "";
   if (sqlite3_prepare_v2(DB, query.c_str(), -1, &stmt, NULL) == SQLITE_OK)
   {
     if (sqlite3_step(stmt) == SQLITE_ROW)
@@ -169,7 +183,6 @@ json loginStage(json received_json, int socketfd)
         sqlite3_stmt *stmtUsers;
         if (sqlite3_prepare_v2(DB, queryUsers.c_str(), -1, &stmtUsers, NULL) == SQLITE_OK)
         {
-          string usersList = "";
           while (sqlite3_step(stmtUsers) == SQLITE_ROW)
           {
             const unsigned char *usernameVal = sqlite3_column_text(stmtUsers, 0);
@@ -184,6 +197,32 @@ json loginStage(json received_json, int socketfd)
           response["all_users"] = usersList;
         }
         sqlite3_finalize(stmtUsers);
+        string groupsList = "";
+        string queryGroups = "SELECT g.NAME FROM GROUPS g "
+                             "JOIN GROUP_MEMBERS gm ON g.ID = gm.GROUP_ID "
+                             "WHERE gm.USERNAME = '" + user + "';";
+        
+        sqlite3_stmt *stmtGroups;
+        if (sqlite3_prepare_v2(DB, queryGroups.c_str(), -1, &stmtGroups, NULL) == SQLITE_OK) {
+            while (sqlite3_step(stmtGroups) == SQLITE_ROW) {
+                const unsigned char *groupNameVal = sqlite3_column_text(stmtGroups, 0);
+                string groupName = string(reinterpret_cast<const char *>(groupNameVal));
+                groupsList += groupName + " (Grupa),";
+            }
+        }
+        sqlite3_finalize(stmtGroups);
+
+        string finalDisplayList = usersList;
+        if (!groupsList.empty()) {
+            if (!finalDisplayList.empty()) finalDisplayList += ",";
+            finalDisplayList += groupsList;
+        }
+        
+        if (!finalDisplayList.empty() && finalDisplayList.back() == ',') {
+            finalDisplayList.pop_back();
+        }
+
+        response["all_users"] = finalDisplayList;
         userManager.addUser(socketfd, user);
         response["status"] = "SUCCESS";
         response["message"] = "Login successful.";
@@ -192,7 +231,8 @@ json loginStage(json received_json, int socketfd)
         broadcast_msg["command"] = "USER_ONLINE";
         broadcast_msg["username"] = user;
         broadcast_msg["online_users"] = userManager.getOnlineList();
-        userManager.broadcast(broadcast_msg.dump(), socketfd);
+        string response_str = broadcast_msg.dump();
+        userManager.broadcast(response_str, socketfd);
       }
       else
       {
@@ -230,7 +270,8 @@ json logoutStage(int socketfd)
     broadcast_msg["username"] = username;
     broadcast_msg["online_users"] = userManager.getOnlineList();
     cout << broadcast_msg.dump() << endl;
-    userManager.broadcast(broadcast_msg.dump(), socketfd);
+    string response_str = broadcast_msg.dump() + "\n";
+    userManager.broadcast(response_str, socketfd);
   }
   else
   {
@@ -240,98 +281,147 @@ json logoutStage(int socketfd)
   return response;
 }
 
-json getMessages(json received_json)
-{
-  json response;
-  string receiver = received_json.value("receiver", "");
-  string sender = received_json.value("sender", "");
+json getMessages(json received_json) {
+    string receiver = received_json.value("receiver", "");
+    string sender = received_json.value("sender", "");
+    
+    string cleanReceiver = receiver;
+    size_t pos = cleanReceiver.find(" (Grupa)");
+    if (pos != string::npos) cleanReceiver.erase(pos);
 
-  sqlite3 *DB;
-  sqlite3_stmt *stmt;
-  char *messageError;
+    sqlite3 *DB;
+    sqlite3_open("chat_database.db", &DB);
 
-  int exit = sqlite3_open("chat_database.db", &DB);
-  string sqlGetMessages =
-      "SELECT SENDER, RECEIVER, CONTENT, TIMESTAMP FROM MESSAGES "
-      "WHERE (SENDER=? AND RECEIVER=?) "
-      "OR (SENDER=? AND RECEIVER=?) "
-      "ORDER BY TIMESTAMP ASC;";
-  int rc = sqlite3_prepare_v2(DB, sqlGetMessages.c_str(), -1, &stmt, nullptr);
-  if (rc != SQLITE_OK)
-  {
-    cerr << "SQL error: " << sqlite3_errmsg(DB) << endl;
-    return 1;
-  }
-  sqlite3_bind_text(stmt, 1, sender.c_str(), -1, SQLITE_STATIC);
-  sqlite3_bind_text(stmt, 2, receiver.c_str(), -1, SQLITE_STATIC);
-  sqlite3_bind_text(stmt, 3, receiver.c_str(), -1, SQLITE_STATIC);
-  sqlite3_bind_text(stmt, 4, sender.c_str(), -1, SQLITE_STATIC);
+    int groupID = -1;
+    sqlite3_stmt *stG;
+    sqlite3_prepare_v2(DB, "SELECT ID FROM GROUPS WHERE NAME = ?;", -1, &stG, nullptr);
+    sqlite3_bind_text(stG, 1, cleanReceiver.c_str(), -1, SQLITE_STATIC);
+    if (sqlite3_step(stG) == SQLITE_ROW) groupID = sqlite3_column_int(stG, 0);
+    sqlite3_finalize(stG);
 
-  json chat_history = json::array();
-  while (sqlite3_step(stmt) == SQLITE_ROW)
-  {
-    json msg;
-    const char *sender = (const char *)sqlite3_column_text(stmt, 0);
-    const char *receiver = (const char *)sqlite3_column_text(stmt, 1);
-    const char *content = (const char *)sqlite3_column_text(stmt, 2);
-    const char *timestamp = (const char *)sqlite3_column_text(stmt, 3);
+    sqlite3_stmt *stmt;
+    if (groupID != -1) {
+        // Pobieramy historię grupy po ID (teraz pola GROUP_ID nie będą już null)
+        string sql = "SELECT SENDER, CONTENT, TIMESTAMP FROM MESSAGES WHERE GROUP_ID = ? ORDER BY TIMESTAMP ASC;";
+        sqlite3_prepare_v2(DB, sql.c_str(), -1, &stmt, nullptr);
+        sqlite3_bind_int(stmt, 1, groupID);
+    } else {
+        string sql = "SELECT SENDER, CONTENT, TIMESTAMP FROM MESSAGES WHERE (SENDER=? AND RECEIVER=?) OR (SENDER=? AND RECEIVER=?) ORDER BY TIMESTAMP ASC;";
+        sqlite3_prepare_v2(DB, sql.c_str(), -1, &stmt, nullptr);
+        sqlite3_bind_text(stmt, 1, sender.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, 2, receiver.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, 3, receiver.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, 4, sender.c_str(), -1, SQLITE_STATIC);
+    }
 
-    msg["sender"] = sender;
-    msg["receiver"] = receiver;
-    msg["content"] = content;
-    msg["time"] = timestamp;
-    chat_history.push_back(msg);
-  }
-  cout << "Historia wiadomości pomiędzy: " << sender << ": " << receiver << endl
-       << chat_history << endl;
-  if (chat_history.empty()) 
-  {
-      json info;
-      info["status"] = "EMPTY";
-      info["content"] = "Brak wiadomości";
-      chat_history.push_back(info); 
-      cout<<chat_history<<endl;
-  }     
-  sqlite3_finalize(stmt);
-  sqlite3_close(DB);
-  return chat_history;
+    json history = json::array();
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        json m;
+        m["sender"] = (const char*)sqlite3_column_text(stmt, 0);
+        m["content"] = (const char*)sqlite3_column_text(stmt, 1);
+        m["time"] = (const char*)sqlite3_column_text(stmt, 2);
+        history.push_back(m);
+    }
+    sqlite3_finalize(stmt);
+    sqlite3_close(DB);
+    if (history.empty()) {
+        json emptyMsg;
+        emptyMsg["status"] = "EMPTY";
+        history.push_back(emptyMsg);
+    }
+    return history;
 }
 
-json sendMessage(json received_json)
+json sendMessage(json received_json) {
+    json response;
+    string receiver = received_json.value("receiver", "");
+    string sender = received_json.value("sender", "");
+    string content = received_json.value("content", "");
+
+    string cleanReceiver = receiver;
+    size_t pos = cleanReceiver.find(" (Grupa)");
+    if (pos != string::npos) cleanReceiver.erase(pos);
+
+    sqlite3 *DB;
+    sqlite3_open("chat_database.db", &DB);
+
+    int groupID = -1;
+    sqlite3_stmt *stG;
+    sqlite3_prepare_v2(DB, "SELECT ID FROM GROUPS WHERE NAME = ?;", -1, &stG, nullptr);
+    sqlite3_bind_text(stG, 1, cleanReceiver.c_str(), -1, SQLITE_STATIC);
+    if (sqlite3_step(stG) == SQLITE_ROW) groupID = sqlite3_column_int(stG, 0);
+    sqlite3_finalize(stG);
+
+    string sql;
+    sqlite3_stmt *stmt;
+    if (groupID != -1) {
+        sql = "INSERT INTO MESSAGES (SENDER, GROUP_ID, CONTENT) VALUES (?, ?, ?);";
+        sqlite3_prepare_v2(DB, sql.c_str(), -1, &stmt, nullptr);
+        sqlite3_bind_text(stmt, 1, sender.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_int(stmt, 2, groupID);
+        sqlite3_bind_text(stmt, 3, content.c_str(), -1, SQLITE_STATIC);
+    } else {
+        sql = "INSERT INTO MESSAGES (SENDER, RECEIVER, CONTENT) VALUES (?, ?, ?);";
+        sqlite3_prepare_v2(DB, sql.c_str(), -1, &stmt, nullptr);
+        sqlite3_bind_text(stmt, 1, sender.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, 2, receiver.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, 3, content.c_str(), -1, SQLITE_STATIC);
+    }
+
+    if (sqlite3_step(stmt) == SQLITE_DONE) {
+        response["status"] = "SUCCESS";
+        if (groupID != -1) response["group_id"] = groupID;
+    }
+    sqlite3_finalize(stmt);
+    sqlite3_close(DB);
+    return response;
+}
+json createGroup(json received_json)
 {
   json response;
-  string receiver = received_json.value("receiver", "");
-  string sender = received_json.value("sender", "");
-  string content = received_json.value("content", "");
-
+  string groupName = received_json.value("group_name", "");
+  string creator = received_json.value("created_by", "");
+  auto members = received_json.value("members", vector<string>());
   sqlite3 *DB;
-  sqlite3_stmt *stmt;
-  if (sqlite3_open("chat_database.db", &DB) != SQLITE_OK)
-  {
-    return {{"status", "ERROR"}, {"message", "DB Open Error"}};
+  char *messaggeError;
+  int exit = sqlite3_open("chat_database.db", &DB);
+
+  if (exit != SQLITE_OK) {
+      return {{"status", "ERROR"}, {"message", "Nie można otworzyć bazy danych"}};
   }
-  string sqlInsert = "INSERT INTO MESSAGES (SENDER, RECEIVER, CONTENT, TIMESTAMP) "
-               "VALUES (?, ?, ?, DATETIME('now', 'localtime'));";
-  if (sqlite3_prepare_v2(DB, sqlInsert.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
+  string sqlGroup = "INSERT INTO GROUPS (NAME, CREATED_BY) VALUES ('" + groupName + "', '" + creator + "');";
+  exit = sqlite3_exec(DB, sqlGroup.c_str(), NULL, 0, &messaggeError);
+  if (exit != SQLITE_OK)
+  {
       response["status"] = "ERROR";
-      response["message"] = sqlite3_errmsg(DB);
+      response["message"] = "Błąd przy tworzeniu grupy: " + string(messaggeError);
+      sqlite3_free(messaggeError);
       sqlite3_close(DB);
       return response;
   }
-  sqlite3_bind_text(stmt, 1, sender.c_str(), -1, SQLITE_STATIC);
-  sqlite3_bind_text(stmt, 2, receiver.c_str(), -1, SQLITE_STATIC);
-  sqlite3_bind_text(stmt, 3, content.c_str(), -1, SQLITE_STATIC);
-  if (sqlite3_step(stmt) != SQLITE_DONE)
+  sqlite3_int64 groupID = sqlite3_last_insert_rowid(DB);
+  bool allAdded = true;
+  for (const string& member : members)
   {
-    response["status"] = "ERROR";
-    response["message"] = sqlite3_errmsg(DB);
+      string sqlMember = "INSERT INTO GROUP_MEMBERS (GROUP_ID, USERNAME) VALUES (" + to_string(groupID) + ", '" + member + "');";
+      exit = sqlite3_exec(DB, sqlMember.c_str(), NULL, 0, &messaggeError);
+      if (exit != SQLITE_OK) {
+          allAdded = false;
+          sqlite3_free(messaggeError);
+      }
+  }
+
+  if (allAdded)
+  {
+      response["status"] = "SUCCESS";
+      response["message"] = "Grupa '" + groupName + "' została utworzona pomyślnie.";
   }
   else
   {
-    response["status"] = "SUCCESS";
-    response["message"] = "Message sent";
+      response["status"] = "PARTIAL_SUCCESS";
+      response["message"] = "Grupa utworzona, ale wystąpił problem z dodaniem niektórych członków.";
   }
-  sqlite3_finalize(stmt);
+
   sqlite3_close(DB);
   return response;
 }
@@ -375,12 +465,46 @@ void *socketThread(void *arg)
         else if (command == "GET_MESSAGES")
         {
           response = getMessages(received_json);
-          cout << "Historia: " << response << endl;
+          //cout << "Historia: " << response << endl;
         }
         else if (command == "SEND_MESSAGE")
         {
           response = sendMessage(received_json);
-          cout<<"Odpowiedz: "<<response<<endl;
+          if (response["status"] == "SUCCESS") {
+              json history = getMessages(received_json);
+              string historyStr = history.dump() + "\n";
+              
+              if (response.contains("group_id")) {
+                  int gID = response["group_id"];
+                  sqlite3 *db;
+                  sqlite3_open("chat_database.db", &db);
+                  sqlite3_stmt *stM;
+                  string sqlM = "SELECT USERNAME FROM GROUP_MEMBERS WHERE GROUP_ID = " + to_string(gID) + ";";
+                  if (sqlite3_prepare_v2(db, sqlM.c_str(), -1, &stM, NULL) == SQLITE_OK) {
+                      while (sqlite3_step(stM) == SQLITE_ROW) {
+                          string mName = (const char*)sqlite3_column_text(stM, 0);
+                          int mSock = userManager.getSocket(mName);
+                          if (mSock != -1) {
+                              userManager.broadcastToUser(historyStr, -1, mSock);
+                          }
+                      }
+                  }
+                  sqlite3_finalize(stM);
+                  sqlite3_close(db);
+              } else {
+                  string receiver = received_json.value("receiver", "");
+                  int receiverSocket = userManager.getSocket(receiver);
+                  
+                  if (receiverSocket != -1) {
+                      userManager.broadcastToUser(historyStr, newSocket, receiverSocket);
+                  }
+                  userManager.broadcastToUser(historyStr, -1, newSocket);
+              }
+          }
+        }
+        else if (command == "CREATE_GROUP")
+        {
+          response = createGroup(received_json);
         }
         else
         {
@@ -389,7 +513,7 @@ void *socketThread(void *arg)
         }
 
         string response_str = response.dump() + "\n";
-        cout << "Odpowiedz" << response_str << endl;
+        //cout << "Odpowiedz" << response_str << endl;
         send(newSocket, response_str.c_str(), response_str.size(), 0);
       }
       catch (json::parse_error &e)

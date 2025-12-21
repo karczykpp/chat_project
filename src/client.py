@@ -17,6 +17,7 @@ class ModernChatClient(ctk.CTk):
         self.current_user = ""
         self.all_users = []
         self.online_friends = []
+        self.selected_users = []
 
         self.title("Komunikator - Klient")
         self.geometry("900x500")
@@ -133,8 +134,12 @@ class ModernChatClient(ctk.CTk):
         self.sock.sendall(msg_to_server.encode('utf-8'))
         print(msg_to_server)
         self.entry_msg.delete(0, "end")
-        self.action_get_messages(self.current_chat_friend)
-        
+        # new_request = {
+        #     "command": "GET_MESSAGES",
+        #     "sender": self.current_user,
+        #     "receiver": self.current_chat_friend
+        # }
+        # self.sock.sendall((json.dumps(new_request) + "\n").encode('utf-8'))
 
     def update_friends_ui(self):
         """Przerysowuje listę znajomych na podstawie aktualnych danych"""
@@ -145,6 +150,12 @@ class ModernChatClient(ctk.CTk):
         for widget in self.friends_list.winfo_children():
             widget.destroy()
         
+        btn_group = ctk.CTkButton(self.friends_list, text="Nowa grupa", 
+                                  command=self.action_create_group,
+                                  fg_color="#3498db", hover_color="#2980b9",
+                                  height=32, font=("Roboto", 12, "bold"))
+        btn_group.pack(pady=(5, 10), padx=10, fill="x")
+
         raw_all = self.all_users or ""
         raw_online = self.online_users or ""
 
@@ -153,25 +164,40 @@ class ModernChatClient(ctk.CTk):
         print("Aktualizacja UI znajomych:")
         print("Wszyscy znajomi:", all_friends)
         print("Online znajomi:", online_friends)
+        self.check_vars = {} 
         for friend in all_friends:
             if friend == self.current_user:
                 continue
 
-            if friend in online_friends:
-                display_text = f"[+] {friend}"  
-                text_col = "#2cc985"         
-            else:
-                display_text = f"[ ] {friend}"  
-                text_col = "gray60"          
+            is_group = "(Grupa)" in friend
+            clean_name = friend.replace(" (Grupa)", "")
+            container = ctk.CTkFrame(self.friends_list, fg_color="transparent")
+            container.pack(fill="x", pady=1, padx=5)
 
-            btn = ctk.CTkButton(self.friends_list, 
-                                text=display_text, 
+            if is_group:
+                text_col = "#3498db" # Niebieski dla grup
+                display_name = f"👥 {clean_name}"
+            else:
+                text_col = "#2cc985" if friend in online_friends else "gray60"
+                display_name = f"● {friend}" if friend in online_friends else f"○ {friend}"    
+
+            btn = ctk.CTkButton(container, 
+                                text=display_name, 
                                 fg_color="transparent", 
                                 text_color=text_col, 
                                 anchor="w", 
-                                command=lambda f=friend: self.action_get_messages(f),
-                                height=30)
-            btn.pack(pady=2, padx=5, fill="x")
+                                command=lambda f=clean_name: self.send_get_message_request(f),
+                                height=35,
+                                hover_color=("gray80", "gray25"))
+            btn.pack(side="left", fill="x", expand=True)
+
+            if not is_group:
+                var = ctk.StringVar(value="off")
+                self.check_vars[clean_name] = var
+                cb = ctk.CTkCheckBox(container, text="", variable=var, 
+                                     onvalue="on", offvalue="off",
+                                     width=24, checkbox_width=18, checkbox_height=18)
+                cb.pack(side="right", padx=(0, 10))
 
     def send_request_logout(self):
         username = self.current_user
@@ -211,14 +237,8 @@ class ModernChatClient(ctk.CTk):
 
         try:
             msg = json.dumps(request_data)
+            print(msg)
             self.sock.sendall(msg.encode('utf-8'))
-
-            buffer = self.sock.recv(2048)
-            if not buffer:
-                return None
-            
-            response = json.loads(buffer.decode('utf-8'))
-            return response
 
         except Exception as e:
             messagebox.showerror("Błąd sieci", str(e))
@@ -227,28 +247,51 @@ class ModernChatClient(ctk.CTk):
     def listen_for_messages(self):
         while True:
             try:
-                buffer = self.sock.recv(2048)
-
+                buffer = self.sock.recv(65536)
                 if not buffer:
                     break
-                message = buffer.decode('utf-8')
+                data = buffer.decode('utf-8').strip()
+                for line in data.split('\n'):
+                    if not line: continue
+                    response = json.loads(line)
+                    print(response)
+                    if isinstance(response, list):
+                        self.action_get_messages(response)
+                    elif isinstance(response, dict):
+                        status = response.get("status")
+                        print(status)
+                        if response.get("command") == "USER_ONLINE":
+                            self.handle_server_message(response)
 
-                response = json.loads(message)
-                if response.get("status") == "SUCCESS" and "Logout" in response.get("message", ""):
-                    continue
-                print("UŻYTKOWNICY ONLINE")
-                print("Otrzymano wiadomość od serwera:", response)
-                
-                print(response.get("command"))
-                
-                self.handle_server_message(response)
-            except OSError:
-                print("Socket zamknięty - kończę wątek nasłuchujący.")
-                break
+                        if response.get("message") == "Login successful.":
+                            print("Przechodzenie do okna czatu...") 
+                            print(response)
+                            all_users = response.get("all_users")
+                            self.all_users = all_users
+                            online_users = response.get("online_users")
+                            self.online_users = online_users
+                            self.current_user = self.entry_user.get()
+                            self.after(0, self.switch_to_chat)
+
+                        elif response.get("message") == "User registered successfully.":
+                            print("Zarejestrowano pomyślnie")
+                            self.after(0, self.switch_to_chat)
+
+                        elif status == "USER_NOT_FOUND":
+                            self.label_status.configure(text="Nie znaleziono użytkownika", text_color="orange")
+                            if messagebox.askyesno("Błąd", "Użytkownik nie istnieje. Chcesz się zarejestrować?"):
+                                self.action_register()
+
+
             except Exception as e:
                 print("Błąd podczas odbierania wiadomości:", e)
                 break
     
+    def switch_to_chat(self):
+        print("Logowanie")
+        self.frame.destroy()
+        self.main_chat_window()
+
     def handle_server_message(self, message):
         print("FUNKCJA UZYTKOWNIKOW")
         if message.get("command") == "USER_ONLINE":
@@ -260,42 +303,78 @@ class ModernChatClient(ctk.CTk):
                 self.after(0, self.update_friends_ui)
 
     def action_login(self):
-        response = self.send_request("LOGIN")
-        print("LOGOOWANIE!")
-        print(response)
-        all_users = response.get("all_users")
-        self.all_users = all_users
-        online_users = response.get("online_users")
-        self.online_users = online_users
-        self.handle_response(response, "LOGIN")
+        receive_thread = threading.Thread(target=self.listen_for_messages, daemon=True)
+        receive_thread.start()
+        self.send_request("LOGIN")
 
     def action_register(self):
         response = self.send_request("REGISTER")
-        self.handle_response(response, "REGISTER")
 
     def action_logout(self):
         print("Wylogowywanie użytkownika...")
-        response = self.send_request_logout()
-        print("WYLOGOWYWANIE")
-        self.sock.close()
-        print("Wylogowywanie...")
+        
+        request_data = {
+            "command": "LOGOUT",
+            "username": self.current_user,
+        }
+        try:
+            msg = json.dumps(request_data) + "\n"
+            self.sock.sendall(msg.encode('utf-8'))
+        except:
+            pass
+
+        try:
+            self.sock.shutdown(socket.SHUT_RDWR)
+            self.sock.close()
+        except:
+            pass
 
         if hasattr(self, 'sidebar_frame'): self.sidebar_frame.destroy()
         if hasattr(self, 'main_area'): self.main_area.destroy()
-
-        self.grid_columnconfigure(0, weight=0)
-        self.grid_columnconfigure(1, weight=0)
-        self.grid_rowconfigure(0, weight=0)
-
+        
         self.current_user = ""
-
+        self.all_users = []
+        self.online_users = ""
+    
         self.create_widgets()
+
         try:
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.sock.connect((HOST, PORT))
+            print("Nowy socket gotowy do kolejnego logowania.")
         except Exception as e:
             messagebox.showerror("Błąd", "Nie można połączyć się ponownie z serwerem.")
-            self.destroy()
+
+    def action_create_group(self):
+        selected_members = []
+        for friend, var in self.check_vars.items():
+            if var.get() == "on":
+                selected_members.append(friend)
+        if len(selected_members) < 2:
+            messagebox.showwarning("Grupa", "Wybierz co najmniej 2 osoby!")
+            return
+        
+        dialog = ctk.CTkInputDialog(text="Podaj nazwę dla nowej grupy:", title="Tworzenie grupy")
+        group_name = dialog.get_input()
+
+        if group_name and group_name.strip():
+            selected_members.append(self.current_user)
+            
+            request_data = {
+                "command": "CREATE_GROUP",
+                "group_name": group_name.strip(),
+                "created_by": self.current_user,
+                "members": selected_members
+            }
+            
+            try:
+                msg = json.dumps(request_data) + "\n"
+                self.sock.sendall(msg.encode('utf-8'))
+                for var in self.check_vars.values():
+                    var.set("off")
+                messagebox.showinfo("Sukces", f"Wysłano prośbę o utworzenie grupy: {group_name}")
+            except Exception as e:
+                messagebox.showerror("Błąd", f"Nie udało się wysłać prośby: {e}")
 
     def send_get_message_request(self, friend):
         self.current_chat_friend = friend
@@ -311,24 +390,15 @@ class ModernChatClient(ctk.CTk):
             msg = json.dumps(request_data) + "\n"
             self.sock.sendall(msg.encode('utf-8'))
             print(msg)
-
-            buffer = self.sock.recv(65536)
-            if not buffer:
-                return None
-            response = json.loads(buffer.decode('utf-8'))
-            print("odpowiedz od servera: ",response)
-            return response
-
         except Exception as e:
             messagebox.showerror("Błąd sieci", str(e))
             return None
     
-    def action_get_messages(self, friend):
-        print("Receiver to: ", friend)
-        response = self.send_get_message_request(friend)
+    def action_get_messages(self, response):
+        print("Receiver to: ", self.current_chat_friend)
         self.chat_history.configure(state="normal")
         self.chat_history.delete("1.0", "end")
-        self.chat_history.insert("end", f"--- Rozmowa z {friend} ---\n\n")
+        self.chat_history.insert("end", f"--- Rozmowa z {self.current_chat_friend} ---\n\n")
 
         print("odpowiedz to: ", response)
         if response:
