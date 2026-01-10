@@ -6,7 +6,7 @@ import threading
 from datetime import datetime
 
 HOST = '127.0.0.1'
-PORT = 1104 
+PORT = 1100
 
 ctk.set_appearance_mode("Dark") 
 ctk.set_default_color_theme("blue") 
@@ -260,25 +260,30 @@ class ModernChatClient(ctk.CTk):
                     response = json.loads(line)
                     print(response)
                     if isinstance(response, list):
-                        self.after(0, lambda: self.action_get_messages(response))
+                        self.after(0, lambda r=response: self.action_get_messages(r))
                     elif isinstance(response, dict):
                         status = response.get("status")
-                        print(status)
-                        if response.get("command") == "USER_ONLINE":
+                        command = response.get("command")
+                        print(f"Status: {status}, Command: {command}")
+
+                        if command == "USER_ONLINE":
                             self.handle_server_message(response)
 
-                        if response.get("message") == "Login successful.":
-                            self.after(0, lambda: self.handle_login_success(response))
+                        elif response.get("message") == "Login successful.":
+                            self.after(0, lambda r=response: self.handle_login_success(r))
 
                         elif response.get("message") == "User registered successfully.":
                             self.after(0, self.handle_registration_success)
 
                         elif status == "USER_NOT_FOUND":
                             self.after(0, self.handle_user_not_found)
+
+                        elif status == "SUCCESS":
+                            pass
                         
                         else:
                              message = response.get("message", "")
-                             self.after(0, lambda: self.handle_error(message))
+                             self.after(0, lambda m=message: self.handle_error(m))
 
 
             except Exception as e:

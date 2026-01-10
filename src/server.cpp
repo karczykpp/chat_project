@@ -544,7 +544,7 @@ int main(void)
   }
 
   serverAddr.sin_family = AF_INET;
-  serverAddr.sin_port = htons(1104);
+  serverAddr.sin_port = htons(1100);
   serverAddr.sin_addr.s_addr = htonl(INADDR_ANY);
   memset(serverAddr.sin_zero, '\0', sizeof serverAddr.sin_zero);
   int opt = 1;
