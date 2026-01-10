@@ -6,7 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include "../json.hpp"
+#include "json.hpp"
 #include <iostream>
 #include <sqlite3.h>
 #include <pthread.h>
@@ -129,6 +129,61 @@ struct sockaddr_in serverAddr, clientAddr;
 socklen_t addr_size;
 
 UserManager userManager;
+
+void initializeDatabase() {
+    sqlite3 *DB;
+    int exit = sqlite3_open("chat_database.db", &DB);
+    if (exit != SQLITE_OK) {
+        cerr << "Error opening database: " << sqlite3_errmsg(DB) << endl;
+        return;
+    }
+
+    const char* createUsers = "CREATE TABLE IF NOT EXISTS USERS ("
+                              "ID INTEGER PRIMARY KEY AUTOINCREMENT, "
+                              "USERNAME TEXT NOT NULL UNIQUE, "
+                              "PASSWORD TEXT NOT NULL);";
+
+    const char* createGroups = "CREATE TABLE IF NOT EXISTS GROUPS ("
+                               "ID INTEGER PRIMARY KEY AUTOINCREMENT, "
+                               "NAME TEXT NOT NULL UNIQUE, "
+                               "CREATED_BY TEXT NOT NULL);";
+
+    const char* createGroupMembers = "CREATE TABLE IF NOT EXISTS GROUP_MEMBERS ("
+                                     "ID INTEGER PRIMARY KEY AUTOINCREMENT, "
+                                     "GROUP_ID INTEGER NOT NULL, "
+                                     "USERNAME TEXT NOT NULL, "
+                                     "FOREIGN KEY(GROUP_ID) REFERENCES GROUPS(ID));";
+
+    const char* createMessages = "CREATE TABLE IF NOT EXISTS MESSAGES ("
+                                 "ID INTEGER PRIMARY KEY AUTOINCREMENT, "
+                                 "SENDER TEXT NOT NULL, "
+                                 "RECEIVER TEXT, "
+                                 "GROUP_ID INTEGER, "
+                                 "CONTENT TEXT NOT NULL, "
+                                 "TIMESTAMP DATETIME DEFAULT CURRENT_TIMESTAMP, "
+                                 "FOREIGN KEY(GROUP_ID) REFERENCES GROUPS(ID));";
+
+    char* errorMessage;
+    if (sqlite3_exec(DB, createUsers, NULL, 0, &errorMessage) != SQLITE_OK) {
+        cerr << "Error creating USERS table: " << errorMessage << endl;
+        sqlite3_free(errorMessage);
+    }
+    if (sqlite3_exec(DB, createGroups, NULL, 0, &errorMessage) != SQLITE_OK) {
+        cerr << "Error creating GROUPS table: " << errorMessage << endl;
+        sqlite3_free(errorMessage);
+    }
+    if (sqlite3_exec(DB, createGroupMembers, NULL, 0, &errorMessage) != SQLITE_OK) {
+        cerr << "Error creating GROUP_MEMBERS table: " << errorMessage << endl;
+        sqlite3_free(errorMessage);
+    }
+    if (sqlite3_exec(DB, createMessages, NULL, 0, &errorMessage) != SQLITE_OK) {
+        cerr << "Error creating MESSAGES table: " << errorMessage << endl;
+        sqlite3_free(errorMessage);
+    }
+
+    sqlite3_close(DB);
+    cout << "Database initialized." << endl;
+}
 
 json registerStage(json received_json)
 {
@@ -536,6 +591,7 @@ void *socketThread(void *arg)
 
 int main(void)
 {
+  initializeDatabase();
   serverSocket = socket(PF_INET, SOCK_STREAM, 0);
   if (serverSocket == -1)
   {
