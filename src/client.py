@@ -16,6 +16,7 @@ class ModernChatClient(ctk.CTk):
         super().__init__()
         self.current_user = ""
         self.all_users = []
+        self.receive_thread = None
         self.online_friends = []
         self.selected_users = []
 
@@ -175,7 +176,7 @@ class ModernChatClient(ctk.CTk):
             container.pack(fill="x", pady=1, padx=5)
 
             if is_group:
-                text_col = "#3498db" # Niebieski dla grup
+                text_col = "#3498db" 
                 display_name = f"👥 {clean_name}"
             else:
                 text_col = "#2cc985" if friend in online_friends else "gray60"
@@ -221,6 +222,9 @@ class ModernChatClient(ctk.CTk):
         if command in ["LOGIN", "REGISTER"]:
             username = self.entry_user.get()
             password = self.entry_pass.get()
+            
+            if username:
+                self.current_user = username
 
             if not username or not password:
                 messagebox.showwarning("Brak danych", "Wypełnij login i hasło!")
@@ -256,7 +260,7 @@ class ModernChatClient(ctk.CTk):
                     response = json.loads(line)
                     print(response)
                     if isinstance(response, list):
-                        self.action_get_messages(response)
+                        self.after(0, lambda: self.action_get_messages(response))
                     elif isinstance(response, dict):
                         status = response.get("status")
                         print(status)
@@ -264,32 +268,55 @@ class ModernChatClient(ctk.CTk):
                             self.handle_server_message(response)
 
                         if response.get("message") == "Login successful.":
-                            print("Przechodzenie do okna czatu...") 
-                            print(response)
-                            all_users = response.get("all_users")
-                            self.all_users = all_users
-                            online_users = response.get("online_users")
-                            self.online_users = online_users
-                            self.current_user = self.entry_user.get()
-                            self.after(0, self.switch_to_chat)
+                            self.after(0, lambda: self.handle_login_success(response))
 
                         elif response.get("message") == "User registered successfully.":
-                            print("Zarejestrowano pomyślnie")
-                            self.after(0, self.switch_to_chat)
+                            self.after(0, self.handle_registration_success)
 
                         elif status == "USER_NOT_FOUND":
-                            self.label_status.configure(text="Nie znaleziono użytkownika", text_color="orange")
-                            if messagebox.askyesno("Błąd", "Użytkownik nie istnieje. Chcesz się zarejestrować?"):
-                                self.action_register()
+                            self.after(0, self.handle_user_not_found)
+                        
+                        else:
+                             message = response.get("message", "")
+                             self.after(0, lambda: self.handle_error(message))
 
 
             except Exception as e:
                 print("Błąd podczas odbierania wiadomości:", e)
                 break
+
+    def handle_error(self, message):
+        if "UNIQUE constraint failed" in message:
+             messagebox.showerror("Błąd rejestracji", "Taki użytkownik już istnieje. Wybierz inną nazwę.")
+        else:
+             messagebox.showerror("Błąd serwera", message)
+
+    def handle_login_success(self, response):
+        print("Przechodzenie do okna czatu...") 
+        print(response)
+        all_users = response.get("all_users")
+        self.all_users = all_users
+        online_users = response.get("online_users")
+        self.online_users = online_users
+        
+        if not self.current_user:
+             self.current_user = response.get("username", "") 
+        
+        self.switch_to_chat()
+
+    def handle_registration_success(self):
+        print("Zarejestrowano pomyślnie. Automatyczne logowanie...")
+        self.action_login()
+
+    def handle_user_not_found(self):
+        self.label_status.configure(text="Nie znaleziono użytkownika", text_color="orange")
+        if messagebox.askyesno("Błąd", "Użytkownik nie istnieje. Chcesz się zarejestrować?"):
+            self.action_register()
     
     def switch_to_chat(self):
         print("Logowanie")
-        self.frame.destroy()
+        if hasattr(self, 'frame') and self.frame.winfo_exists():
+            self.frame.destroy()
         self.main_chat_window()
 
     def handle_server_message(self, message):
@@ -303,12 +330,17 @@ class ModernChatClient(ctk.CTk):
                 self.after(0, self.update_friends_ui)
 
     def action_login(self):
-        receive_thread = threading.Thread(target=self.listen_for_messages, daemon=True)
-        receive_thread.start()
+        self.start_listening()
         self.send_request("LOGIN")
 
     def action_register(self):
+        self.start_listening()
         response = self.send_request("REGISTER")
+    
+    def start_listening(self):
+        if self.receive_thread is None or not self.receive_thread.is_alive():
+             self.receive_thread = threading.Thread(target=self.listen_for_messages, daemon=True)
+             self.receive_thread.start()
 
     def action_logout(self):
         print("Wylogowywanie użytkownika...")
@@ -342,6 +374,7 @@ class ModernChatClient(ctk.CTk):
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.sock.connect((HOST, PORT))
             print("Nowy socket gotowy do kolejnego logowania.")
+            self.receive_thread = None
         except Exception as e:
             messagebox.showerror("Błąd", "Nie można połączyć się ponownie z serwerem.")
 
@@ -436,8 +469,6 @@ class ModernChatClient(ctk.CTk):
             print("Operacja zakończona sukcesem.")
             messagebox.showinfo("Sukces", message)
             
-            # Tu w przyszłości otworzysz okno czatu!!!!!!!!!!!!!
-
             if action_type == "LOGIN":
                 print("Przechodzenie do okna czatu...") 
                 self.current_user = self.entry_user.get()
@@ -454,7 +485,7 @@ class ModernChatClient(ctk.CTk):
 
         else: 
             self.label_status.configure(text=f"Błąd: {message}", text_color="red")
-            messagebox.showerror("Błąd serwera", message)
+            self.after(0, lambda: self.handle_error(message))
 
     def on_closing(self):
         try:
