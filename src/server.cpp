@@ -219,8 +219,10 @@ json loginStage(json received_json, int socketfd)
   string password = received_json.value("password", "");
 
   sqlite3 *DB;
-  char *messaggeError;
   int exit = sqlite3_open("chat_database.db", &DB);
+  if (exit != SQLITE_OK) {
+      return {{"status", "ERROR"}, {"message", "Database error"}};
+  }
   string query = "SELECT USERNAME, PASSWORD FROM USERS WHERE USERNAME='" + user + "';";
   sqlite3_stmt *stmt;
   string usersList = "";
@@ -228,6 +230,12 @@ json loginStage(json received_json, int socketfd)
   {
     if (sqlite3_step(stmt) == SQLITE_ROW)
     {
+      if (userManager.getSocket(user) != -1) {
+          response["status"] = "ALREADY_LOGGED_IN";
+          response["message"] = "Użytkownik jest już zalogowany!";
+          sqlite3_finalize(stmt);
+          return response;
+      }
       const unsigned char *usernameVal = sqlite3_column_text(stmt, 0);
       const unsigned char *passwordVal = sqlite3_column_text(stmt, 1);
       string userDB = string(reinterpret_cast<const char *>(usernameVal));

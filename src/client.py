@@ -278,6 +278,10 @@ class ModernChatClient(ctk.CTk):
                         elif status == "USER_NOT_FOUND":
                             self.after(0, self.handle_user_not_found)
 
+                        elif status == "ALREADY_LOGGED_IN":
+                             message = response.get("message", "")
+                             self.after(0, lambda m=message: messagebox.showerror("Błąd logowania", m))
+
                         elif status == "SUCCESS":
                             pass
                         
@@ -329,6 +333,12 @@ class ModernChatClient(ctk.CTk):
         if message.get("command") == "USER_ONLINE":
             username = message.get("username")
             if username:
+                # Jeśli to nowy użytkownik (nie ma go na liście), dodaj go
+                current_users_list = [u.strip() for u in self.all_users.split(',') if u.strip()]
+                if username not in current_users_list and username != self.current_user:
+                    current_users_list.append(username)
+                    self.all_users = ",".join(current_users_list)
+                    
                 help_online = message.get("online_users")
                 self.online_users = help_online
                 print("Zaktualizowana lista online użytkowników:", self.online_users)
