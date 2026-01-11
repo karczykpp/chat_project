@@ -46,6 +46,9 @@ Release/
 *.log
 *.tmp
 
+# macOS
+.DS_Store
+
 # Shell scripts (except run_client.sh)
 *.sh
 !run_client.sh
