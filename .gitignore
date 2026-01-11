@@ -45,3 +45,6 @@ Release/
 # Temporary
 *.log
 *.tmp
+
+# Shell scripts
+*.sh
