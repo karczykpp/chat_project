@@ -4,8 +4,9 @@ import json
 from tkinter import messagebox
 import threading
 from datetime import datetime
+import os
 
-HOST = '127.0.0.1'
+HOST = os.getenv('SERVER_IP', '127.0.0.1')
 PORT = 1100
 
 ctk.set_appearance_mode("Dark") 
