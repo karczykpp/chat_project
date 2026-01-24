@@ -8,13 +8,13 @@ Projekt umożliwia komunikację prywatną oraz grupową z wykorzystaniem protoko
 ## 📸 Zrzuty ekranu
 
 ### 🔐 Ekran logowania
-![Ekran logowania](screenshots/Zrzut ekranu 2026-01-24 120916.png)
+![Ekran logowania](screenshots/login.png)
 
 ### 👥 Czat grupowy
-![Czat grupowy](screenshots/Zrzut ekranu 2026-01-24 121359.png)
+![Czat grupowy](screenshots/group.png)
 
 ### 💬 Czat prywatny
-![Czat prywatny](screenshots/Zrzut ekranu 2026-01-24 121129.png)
+![Czat prywatny](screenshots/private.png)
 
 ---
 
